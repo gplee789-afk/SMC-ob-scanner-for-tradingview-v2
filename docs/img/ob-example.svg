@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="320" viewBox="0 0 720 320" font-family="-apple-system, 'Segoe UI', 'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="13">
+  <rect width="720" height="320" rx="10" fill="#ffffff"/>
+
+  <!-- 多方 OB 區塊：從 OB 那根 K 往右延伸 -->
+  <rect x="252" y="205" width="448" height="45" fill="#2f9e7e" fill-opacity="0.16" stroke="#2f9e7e" stroke-opacity="0.6"/>
+  <text x="692" y="233" text-anchor="end" fill="#2f9e7e" font-weight="600">多方 OB</text>
+
+  <!-- 被突破的 swing 高點與 BOS -->
+  <line x1="140" y1="120" x2="380" y2="120" stroke="#2f9e7e" stroke-width="1.5" stroke-dasharray="5 4"/>
+  <text x="260" y="113" text-anchor="middle" fill="#2f9e7e" font-weight="600">BOS</text>
+
+  <!-- K 線：綠 = 收漲，紅 = 收跌 -->
+  <g stroke-width="1.5">
+    <g stroke="#26a69a" fill="#26a69a">
+      <line x1="60" y1="210" x2="60" y2="270"/><rect x="52" y="220" width="16" height="40"/>
+      <line x1="100" y1="170" x2="100" y2="232"/><rect x="92" y="180" width="16" height="45"/>
+      <line x1="140" y1="120" x2="140" y2="190"/><rect x="132" y="150" width="16" height="35"/>
+      <line x1="300" y1="190" x2="300" y2="244"/><rect x="292" y="195" width="16" height="43"/>
+      <line x1="340" y1="145" x2="340" y2="204"/><rect x="332" y="150" width="16" height="48"/>
+      <line x1="380" y1="98" x2="380" y2="156"/><rect x="372" y="105" width="16" height="47"/>
+      <line x1="420" y1="78" x2="420" y2="112"/><rect x="412" y="85" width="16" height="23"/>
+      <line x1="580" y1="158" x2="580" y2="215"/><rect x="572" y="165" width="16" height="35"/>
+      <line x1="620" y1="128" x2="620" y2="172"/><rect x="612" y="135" width="16" height="33"/>
+    </g>
+    <g stroke="#ef5350" fill="#ef5350">
+      <line x1="180" y1="140" x2="180" y2="192"/><rect x="172" y="150" width="16" height="35"/>
+      <line x1="220" y1="178" x2="220" y2="222"/><rect x="212" y="185" width="16" height="30"/>
+      <line x1="260" y1="205" x2="260" y2="250"/><rect x="252" y="212" width="16" height="28"/>
+      <line x1="460" y1="82" x2="460" y2="126"/><rect x="452" y="88" width="16" height="32"/>
+      <line x1="500" y1="115" x2="500" y2="168"/><rect x="492" y="120" width="16" height="40"/>
+      <line x1="540" y1="152" x2="540" y2="210"/><rect x="532" y="160" width="16" height="35"/>
+    </g>
+  </g>
+
+  <!-- 標註 -->
+  <g fill="#3a4250">
+    <text x="140" y="104" text-anchor="middle">① swing 高點</text>
+
+    <line x1="260" y1="254" x2="260" y2="272" stroke="#3a4250"/>
+    <text x="260" y="290" text-anchor="middle">② 回檔中最低的那根 K</text>
+    <text x="260" y="307" text-anchor="middle">它的高低點 = OB 區間</text>
+
+    <text x="380" y="60" text-anchor="middle">③ 收盤站上 swing 高點 = 結構破壞</text>
+
+    <circle cx="540" cy="210" r="6" fill="none" stroke="#e8a33d" stroke-width="2"/>
+    <line x1="540" y1="217" x2="540" y2="272" stroke="#3a4250"/>
+    <text x="540" y="290" text-anchor="middle">④ 價格從外面回到 OB 裡</text>
+    <text x="540" y="307" text-anchor="middle">= 「進入多方 OB」訊號</text>
+  </g>
+</svg>

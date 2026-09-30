@@ -12,6 +12,8 @@ flowchart LR
 
 > 本專案只做 Order Block。BOS / CHoCH 只用來產生 OB，不是獨立訊號；不處理 FVG。
 
+第一次用 TradingView，或不熟 SMC / Order Block？先看 **[新手教學](docs/tutorial.md)**。
+
 ---
 
 ## 檔案
@@ -21,6 +23,7 @@ flowchart LR
 | `index.html` | 名單工具：放入法人買賣超檔案，排出前 400 檔，每 40 檔一批 |
 | `pine/smc_ob_screener.pine` | 多商品掃描器：一次掃 40 檔，結果排成表格，一個警報涵蓋全部 |
 | `pine/smc_order_blocks.pine` | 單一商品指標：把 OB、BOS / CHoCH 畫在圖上，用來確認 |
+| `docs/tutorial.md` | 新手教學：TradingView 基本操作與 SMC / Order Block 觀念 |
 
 ---
 
