@@ -7,9 +7,7 @@
 //  之公開演算法重新實作。「價格進入 OB」的判定為本指標自行追加。
 //  僅供研究用途，請遵守原作者非商業授權條款。
 // ══════════════════════════════════════════════════════════════════════
-// 本指標沒有任何 plot，只有 box / label / line。不指定 scale 時，TradingView 可能把它
-// 掛到獨立刻度，拖動價格軸時 K 線會動、OB 區塊不動（新帳號尤其明顯），所以明確綁在右側刻度。
-indicator("SMC Order Blocks", "SMC OB", overlay = true, scale = scale.right, max_bars_back = 500,
+indicator("SMC Order Blocks", "SMC OB", overlay = true, max_bars_back = 500,
      max_boxes_count = 60, max_labels_count = 500, max_lines_count = 500)
 
 G_STR  = "① 結構"
