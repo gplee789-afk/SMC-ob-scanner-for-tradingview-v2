@@ -1,0 +1,275 @@
+//@version=6
+// ══════════════════════════════════════════════════════════════════════
+//  SMC Order Blocks
+//  單一商品的 order block 視覺化指標
+//
+//  結構偵測與 OB 取法參考 LuxAlgo "Smart Money Concepts"（CC BY-NC-SA 4.0）
+//  之公開演算法重新實作。「價格進入 OB」的判定為本指標自行追加。
+//  僅供研究用途，請遵守原作者非商業授權條款。
+// ══════════════════════════════════════════════════════════════════════
+indicator("SMC Order Blocks", "SMC OB", overlay = true, max_bars_back = 500,
+     max_boxes_count = 60, max_labels_count = 500, max_lines_count = 500)
+
+G_STR  = "① 結構"
+G_OB   = "② Order Block"
+G_DISP = "③ 顯示"
+G_CLR  = "④ 配色"
+
+// ═══════════════ ① 結構 ═══════════════
+structMode = input.string("Internal", "結構層級", options = ["Internal", "Swing"], group = G_STR,
+     tooltip = "Internal 用短週期 swing，訊號多、反應快；Swing 用長週期，訊號少、層級高。")
+intLen   = input.int(5,  "Internal 長度", minval = 2,  group = G_STR)
+swingLen = input.int(50, "Swing 長度",    minval = 10, group = G_STR)
+ifilter  = input.bool(false, "Confluence Filter", group = G_STR,
+     tooltip = "過濾影線不對稱的結構破壞，訊號會變少。")
+
+// ═══════════════ ② Order Block ═══════════════
+obFilter = input.string("Atr", "波動濾網", options = ["Atr", "Cumulative Mean Range"], group = G_OB,
+     tooltip = "用來排除振幅過大的 K 棒。資料量少時建議用 Cumulative Mean Range。")
+mitigate = input.string("High/Low", "失效判定", options = ["Close", "High/Low"], group = G_OB,
+     tooltip = "High/Low 較嚴格，影線穿越即失效；Close 需收盤穿越。")
+obShow   = input.int(5, "顯示數量", minval = 1, maxval = 20, group = G_OB)
+
+// ═══════════════ ③ 顯示 ═══════════════
+showBox   = input.bool(true,  "Order Block 區塊", group = G_DISP)
+showVal   = input.bool(true,  "區間數值",         group = G_DISP)
+showStruc = input.bool(true,  "BOS / CHoCH 標記", group = G_DISP)
+showPanel = input.bool(true,  "狀態面板",         group = G_DISP)
+panelPos  = input.string("右上", "面板位置", options = ["右上","右下","左上","左下"], group = G_DISP)
+
+// ═══════════════ ④ 配色 ═══════════════
+cBull = input.color(color.new(#2f9e7e, 78), "多方 OB", group = G_CLR)
+cBear = input.color(color.new(#d1495b, 78), "空方 OB", group = G_CLR)
+cBullL= input.color(#3fc99f, "多方線條", group = G_CLR)
+cBearL= input.color(#ef6b7c, "空方線條", group = G_CLR)
+
+C_PANEL = #171b21
+C_HEAD  = #232a33
+C_TXT   = #98a3b0
+
+// ═══════════════ 型別 ═══════════════
+type pivot
+    float level    = na
+    bool  crossed  = false
+    int   barIndex = 0
+
+type ob
+    float top    = na
+    float btm    = na
+    int   barIdx = 0
+    int   bias   = 0
+
+var pivot iHigh = pivot.new()
+var pivot iLow  = pivot.new()
+var pivot sHigh = pivot.new()
+var pivot sLow  = pivot.new()
+var int   bias  = 0
+
+var array<float> pHighs = array.new<float>()
+var array<float> pLows  = array.new<float>()
+var array<ob>    obs    = array.new<ob>()
+var array<box>   boxes  = array.new<box>()
+var array<label> labels = array.new<label>()
+
+if barstate.isfirst
+    for i = 1 to obShow
+        array.push(boxes, box.new(na, na, na, na, extend = extend.right))
+        array.push(labels, label.new(na, na, "", style = label.style_label_left,
+             color = color.new(color.black, 100), size = size.small))
+
+// ═══════════════ 波動濾網（高波動 K 的高低對調，使其選不上極值）═══════════════
+atrM   = ta.atr(200)
+volM   = obFilter == "Atr" ? atrM : ta.cum(ta.tr) / math.max(bar_index, 1)
+hotBar = (high - low) >= (2 * volM)
+array.push(pHighs, hotBar ? low  : high)
+array.push(pLows,  hotBar ? high : low)
+
+// ═══════════════ leg / pivot ═══════════════
+f_leg(size) =>
+    var int lg = 0
+    if high[size] > ta.highest(size)
+        lg := 0
+    else if low[size] < ta.lowest(size)
+        lg := 1
+    lg
+
+f_update(int size, pivot pH, pivot pL) =>
+    chg = ta.change(f_leg(size))
+    if chg == +1
+        pL.level    := low[size]
+        pL.crossed  := false
+        pL.barIndex := bar_index - size
+    else if chg == -1
+        pH.level    := high[size]
+        pH.crossed  := false
+        pH.barIndex := bar_index - size
+
+f_update(swingLen, sHigh, sLow)
+f_update(intLen,   iHigh, iLow)
+
+f_store(pivot p, int dir, array<float> ph, array<float> pl, array<ob> store) =>
+    if p.barIndex < bar_index and p.barIndex >= 0
+        int idx = na
+        if dir == -1
+            a = array.slice(ph, p.barIndex, bar_index)
+            idx := p.barIndex + array.indexof(a, array.max(a))
+        else
+            a = array.slice(pl, p.barIndex, bar_index)
+            idx := p.barIndex + array.indexof(a, array.min(a))
+        array.unshift(store, ob.new(array.get(ph, idx), array.get(pl, idx), idx, dir))
+        if array.size(store) > 100
+            array.pop(store)
+
+f_struc(pivot p, string tag, color col, int barIdx) =>
+    line.new(p.barIndex, p.level, bar_index, p.level, color = col, style = line.style_dashed)
+    label.new(math.round(0.5 * (p.barIndex + bar_index)), p.level, tag,
+         style = tag == "CHoCH" ? label.style_label_down : label.style_label_up,
+         color = color.new(color.black, 100), textcolor = col, size = size.tiny)
+
+// ═══════════════ 結構破壞 ═══════════════
+useInt = structMode == "Internal"
+bullBar = ifilter ? (high - math.max(close, open) > math.min(close, open - low)) : true
+bearBar = ifilter ? (high - math.max(close, open) < math.min(close, open - low)) : true
+
+pHi = useInt ? iHigh : sHigh
+pLo = useInt ? iLow  : sLow
+okUp = useInt ? (iHigh.level != sHigh.level and bullBar) : true
+okDn = useInt ? (iLow.level  != sLow.level  and bearBar) : true
+
+bool brokeUp = false
+bool brokeDn = false
+
+if ta.crossover(close, pHi.level) and not pHi.crossed and okUp
+    tag = bias == -1 ? "CHoCH" : "BOS"
+    pHi.crossed := true
+    bias := 1
+    brokeUp := true
+    f_store(pHi, 1, pHighs, pLows, obs)
+    if showStruc
+        f_struc(pHi, tag, cBullL, bar_index)
+
+if ta.crossunder(close, pLo.level) and not pLo.crossed and okDn
+    tag = bias == 1 ? "CHoCH" : "BOS"
+    pLo.crossed := true
+    bias := -1
+    brokeDn := true
+    f_store(pLo, -1, pHighs, pLows, obs)
+    if showStruc
+        f_struc(pLo, tag, cBearL, bar_index)
+
+// ═══════════════ 失效 ═══════════════
+bearSrc = mitigate == "Close" ? close : high
+bullSrc = mitigate == "Close" ? close : low
+
+bool killBull = false
+bool killBear = false
+
+if array.size(obs) > 0
+    for k = array.size(obs) - 1 to 0
+        o = array.get(obs, k)
+        if o.bias == -1 and bearSrc > o.top
+            killBear := true
+            array.remove(obs, k)
+        else if o.bias == 1 and bullSrc < o.btm
+            killBull := true
+            array.remove(obs, k)
+
+// ═══════════════ 進入 OB 判定（只看顯示中的前 obShow 個）═══════════════
+var bool wasBull = false
+var bool wasBear = false
+bool inBull = false
+bool inBear = false
+float nearBullTop = na
+float nearBullBtm = na
+float nearBearTop = na
+float nearBearBtm = na
+
+lim = math.min(array.size(obs), obShow)
+if lim > 0
+    for k = 0 to lim - 1
+        o = array.get(obs, k)
+        isIn = low <= o.top and high >= o.btm
+        if o.bias == 1
+            inBull := inBull or isIn
+            if na(nearBullTop) or math.abs(close - o.top) < math.abs(close - nearBullTop)
+                nearBullTop := o.top
+                nearBullBtm := o.btm
+        else
+            inBear := inBear or isIn
+            if na(nearBearBtm) or math.abs(close - o.btm) < math.abs(close - nearBearBtm)
+                nearBearTop := o.top
+                nearBearBtm := o.btm
+
+// OB 成立當根不算進場
+enterBull = inBull and not wasBull and not brokeUp
+enterBear = inBear and not wasBear and not brokeDn
+wasBull := inBull
+wasBear := inBear
+
+// ═══════════════ 畫框 ═══════════════
+if (barstate.islastconfirmedhistory or barstate.islast) and showBox
+    n = array.size(obs)
+    for i = 0 to obShow - 1
+        b = array.get(boxes,  i)
+        l = array.get(labels, i)
+        if i < n
+            o = array.get(obs, i)
+            box.set_lefttop(b, o.barIdx, o.top)
+            box.set_rightbottom(b, bar_index, o.btm)
+            box.set_bgcolor(b, o.bias == 1 ? cBull : cBear)
+            box.set_border_color(b, color.new(o.bias == 1 ? cBullL : cBearL, 55))
+            if showVal
+                label.set_xy(l, bar_index, o.top)
+                label.set_text(l, str.tostring(o.btm, format.mintick) + " – " + str.tostring(o.top, format.mintick))
+                label.set_textcolor(l, o.bias == 1 ? cBullL : cBearL)
+            else
+                label.set_text(l, "")
+        else
+            box.set_lefttop(b, na, na)
+            box.set_rightbottom(b, na, na)
+            label.set_text(l, "")
+
+// ═══════════════ 狀態面板 ═══════════════
+f_pos() =>
+    switch panelPos
+        "右上" => position.top_right
+        "右下" => position.bottom_right
+        "左上" => position.top_left
+        => position.bottom_left
+
+var table tb = table.new(f_pos(), 3, 4, border_width = 0, frame_width = 1, frame_color = C_HEAD)
+
+// Pine 的函式必須宣告在全域範圍，不能寫在 if 區塊裡
+f_row(int r, string k, float tp, float bt, bool isIn, color c) =>
+    table.cell(tb, 0, r, k, bgcolor = C_PANEL, text_color = c, text_size = size.small, text_halign = text.align_left)
+    table.cell(tb, 1, r, na(tp) ? "–" : str.tostring(bt, format.mintick) + "–" + str.tostring(tp, format.mintick),
+         bgcolor = C_PANEL, text_color = na(tp) ? C_TXT : color.white, text_size = size.small)
+    dist = na(tp) ? na : (k == "多方" ? (close - tp) / close * 100 : (bt - close) / close * 100)
+    table.cell(tb, 2, r, isIn ? "已進入" : na(dist) ? "–" : (dist >= 0 ? str.tostring(dist, "#.0") + "%" : "已穿越"),
+         bgcolor = isIn ? color.new(c, 60) : C_PANEL,
+         text_color = isIn ? color.white : C_TXT, text_size = size.small)
+
+if barstate.islast and showPanel
+    table.cell(tb, 0, 0, structMode, bgcolor = C_HEAD, text_color = C_TXT, text_size = size.small, text_halign = text.align_left)
+    table.cell(tb, 1, 0, "區間",     bgcolor = C_HEAD, text_color = C_TXT, text_size = size.small)
+    table.cell(tb, 2, 0, "距離",     bgcolor = C_HEAD, text_color = C_TXT, text_size = size.small)
+    f_row(1, "多方", nearBullTop, nearBullBtm, inBull, cBullL)
+    f_row(2, "空方", nearBearTop, nearBearBtm, inBear, cBearL)
+    table.cell(tb, 0, 3, "趨勢", bgcolor = C_PANEL, text_color = C_TXT, text_size = size.small, text_halign = text.align_left)
+    table.cell(tb, 1, 3, bias == 1 ? "多" : bias == -1 ? "空" : "–", bgcolor = C_PANEL,
+         text_color = bias == 1 ? cBullL : bias == -1 ? cBearL : C_TXT, text_size = size.small)
+    table.cell(tb, 2, 3, "", bgcolor = C_PANEL)
+
+// ═══════════════ 通知 ═══════════════
+alertcondition(enterBull, "進入多方 OB", "價格進入多方 order block")
+alertcondition(enterBear, "進入空方 OB", "價格進入空方 order block")
+alertcondition(brokeUp,   "向上結構破壞", "偵測到向上 BOS / CHoCH")
+alertcondition(brokeDn,   "向下結構破壞", "偵測到向下 BOS / CHoCH")
+alertcondition(killBull,  "多方 OB 失效", "多方 order block 被穿越")
+alertcondition(killBear,  "空方 OB 失效", "空方 order block 被穿越")
+
+msg = enterBull ? syminfo.ticker + " 進入多方 OB " + str.tostring(nearBullBtm, format.mintick) + "–" + str.tostring(nearBullTop, format.mintick)
+     : enterBear ? syminfo.ticker + " 進入空方 OB " + str.tostring(nearBearBtm, format.mintick) + "–" + str.tostring(nearBearTop, format.mintick)
+     : ""
+if barstate.isconfirmed and str.length(msg) > 0
+    alert(msg, alert.freq_once_per_bar_close)

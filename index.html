@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>法人買超分批</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #F2F4F6; --surface: #FFFFFF; --ink: #18212B; --muted: #5E6B78; --line: #D8DEE4;
+  --buy: #C62032; --twse: #2C4A7A; --tpex: #2A8C82; --warn-bg: #FFF4D6; --warn-ink: #6B4E00;
+  --err-bg: #FDE7E9; --focus: #2C4A7A;
+  box-sizing: border-box;
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #12171D; --surface: #1A2129; --ink: #E6EBF0; --muted: #95A1AD; --line: #2C3640;
+    --buy: #F0505F; --twse: #7EA2DC; --tpex: #5CC4B8; --warn-bg: #3A3015; --warn-ink: #F2D27A;
+    --err-bg: #3A1D22; --focus: #7EA2DC;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #12171D; --surface: #1A2129; --ink: #E6EBF0; --muted: #95A1AD; --line: #2C3640;
+  --buy: #F0505F; --twse: #7EA2DC; --tpex: #5CC4B8; --warn-bg: #3A3015; --warn-ink: #F2D27A;
+  --err-bg: #3A1D22; --focus: #7EA2DC;
+}
+*, *::before, *::after { box-sizing: inherit; }
+html { scroll-padding-top: env(safe-area-inset-top, 0px); }
+body {
+  margin: 0; background: var(--bg); color: var(--ink);
+  font-family: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", system-ui, sans-serif;
+  font-size: 15px; line-height: 1.6; font-variant-numeric: tabular-nums;
+}
+.wrap { max-width: 980px; margin: 0 auto; padding: 32px 20px 64px; }
+header { display: flex; flex-wrap: wrap; gap: 16px 32px; align-items: end; justify-content: space-between; margin-bottom: 24px; }
+h1 { margin: 0; font-size: 30px; font-weight: 900; letter-spacing: .02em; line-height: 1.2; }
+.lede { margin: 6px 0 0; color: var(--muted); max-width: 46em; }
+
+.controls { display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: center; }
+.check { display: inline-flex; gap: 6px; align-items: center; font-size: 14px; color: var(--muted); cursor: pointer; }
+.check input { accent-color: var(--ink); width: 16px; height: 16px; }
+
+.slots { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px; }
+.col { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.col .slot { flex: 1; }
+.dl {
+  align-self: flex-start; font-size: 13px; color: var(--ink); text-decoration: none;
+  border: 1px solid var(--line); background: var(--surface); padding: 5px 12px; border-radius: 6px;
+}
+.dl:hover { border-color: var(--ink); }
+.dl:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.slot {
+  position: relative; display: block; background: var(--surface); border: 2px dashed var(--line);
+  border-radius: 12px; padding: 18px 20px; cursor: pointer; min-height: 128px;
+  border-left: 6px solid var(--mk);
+}
+.slot[data-slot="twse"] { --mk: var(--twse); }
+.slot[data-slot="tpex"] { --mk: var(--tpex); }
+.slot.over { border-style: solid; border-color: var(--mk); }
+.slot.loaded { border-style: solid; }
+.slot:focus-within { outline: 2px solid var(--focus); outline-offset: 2px; }
+.slot input[type=file] { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.slot h2 { margin: 0; font-size: 20px; font-weight: 700; color: var(--mk); }
+.slot .src { margin: 2px 0 10px; font-size: 13px; color: var(--muted); }
+.slot .state { font-size: 14px; }
+.slot .fname { font-weight: 500; word-break: break-all; }
+.slot .meta { color: var(--muted); font-size: 13px; }
+.slot .err { background: var(--err-bg); color: var(--buy); padding: 8px 10px; border-radius: 6px; font-size: 13px; }
+.slot .clear {
+  position: absolute; top: 10px; right: 10px; border: 0; background: transparent; color: var(--muted);
+  font: inherit; font-size: 13px; cursor: pointer; padding: 4px 8px; border-radius: 6px;
+}
+.slot .clear:hover { background: var(--bg); color: var(--ink); }
+.slot .clear:focus-visible { outline: 2px solid var(--focus); }
+
+.where { font-size: 13px; color: var(--muted); margin: -4px 0 20px; max-width: 60em; }
+.where a, footer a { color: var(--twse); }
+footer { margin-top: 40px; padding-top: 16px; border-top: 1px solid var(--line); font-size: 13px; color: var(--muted); max-width: 60em; }
+footer p { margin: 0 0 6px; }
+.notes { display: grid; gap: 8px; margin-bottom: 20px; }
+.note { background: var(--warn-bg); color: var(--warn-ink); padding: 10px 14px; border-radius: 8px; font-size: 14px; }
+.summary { color: var(--muted); font-size: 14px; margin: 0 0 12px; }
+.summary b { color: var(--ink); font-weight: 500; }
+
+.empty { border: 1px solid var(--line); border-radius: 12px; padding: 40px 20px; text-align: center; color: var(--muted); background: var(--surface); }
+
+ol.batches { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line); }
+.batch { border-bottom: 1px solid var(--line); }
+.row { display: grid; grid-template-columns: 64px 1fr auto; gap: 16px; align-items: center; padding: 14px 4px; }
+.num { font-size: 34px; font-weight: 900; line-height: 1; color: var(--ink); text-align: right; }
+.batch.done .num { color: var(--line); }
+.info { min-width: 0; cursor: pointer; background: none; border: 0; padding: 0; text-align: left; font: inherit; color: inherit; }
+.info:focus-visible { outline: 2px solid var(--focus); outline-offset: 4px; border-radius: 4px; }
+.line1 { display: flex; flex-wrap: wrap; gap: 4px 16px; align-items: baseline; }
+.range { font-weight: 700; }
+.vol { color: var(--buy); font-weight: 500; }
+.vol small { color: var(--muted); font-weight: 400; font-size: 12px; }
+.mix { display: flex; height: 6px; border-radius: 3px; overflow: hidden; margin: 8px 0 4px; background: var(--line); max-width: 420px; }
+.mix .t { background: var(--twse); } .mix .p { background: var(--tpex); }
+.mixlab { font-size: 12px; color: var(--muted); }
+.mixlab .t { color: var(--twse); font-weight: 500; } .mixlab .p { color: var(--tpex); font-weight: 500; }
+.copy {
+  font: inherit; font-size: 14px; font-weight: 500; padding: 8px 18px; border-radius: 8px; cursor: pointer;
+  border: 1px solid var(--ink); background: var(--ink); color: var(--surface); white-space: nowrap;
+}
+.copy:hover { opacity: .88; }
+.copy:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.batch.done .copy { background: transparent; color: var(--ink); }
+.detail { display: none; padding: 0 4px 18px 84px; }
+.batch.open .detail { display: block; }
+.fallback { display: none; margin-bottom: 12px; }
+.fallback p { margin: 0 0 6px; font-size: 13px; color: var(--buy); }
+.fallback textarea { width: 100%; max-width: 320px; height: 160px; font: 13px/1.5 ui-monospace, Menlo, monospace; background: var(--bg); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 8px; }
+.batch.fail .fallback { display: block; }
+.tbl { overflow-x: auto; }
+table { border-collapse: collapse; font-size: 13px; min-width: 460px; }
+th, td { padding: 4px 12px 4px 0; text-align: left; white-space: nowrap; }
+th { color: var(--muted); font-weight: 500; border-bottom: 1px solid var(--line); }
+td.n { text-align: right; color: var(--buy); }
+th.n { text-align: right; }
+td.m-TWSE { color: var(--twse); } td.m-TPEX { color: var(--tpex); }
+
+@media (max-width: 640px) {
+  .slots { grid-template-columns: 1fr; }
+  .row { grid-template-columns: 40px 1fr; }
+  .num { font-size: 24px; }
+  .copy { grid-column: 2; justify-self: start; }
+  .detail { padding-left: 4px; }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .copy, .slot { transition: background-color .15s, border-color .15s, color .15s; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>法人買超分批</h1>
+      <p class="lede">丟入上市、上櫃的法人買賣超檔，依三大法人買超股數排序，取前 400 檔、每 40 檔一批，複製後可以直接貼進 TradingView 多商品腳本的代號框（Pine 的 request.security 一次最多 40 檔）。只放一邊也可以。</p>
+    </div>
+    <div class="controls">
+      <label class="check"><input type="checkbox" id="exdr">排除 DR</label>
+    </div>
+  </header>
+
+  <section class="slots">
+    <div class="col">
+    <label class="slot" data-slot="twse">
+      <input type="file" accept=".csv,.html,text/csv,text/html" aria-label="選擇上市檔案">
+      <h2>上市</h2>
+      <p class="src">證交所 T86 三大法人買賣超日報</p>
+      <div class="state"></div>
+    </label>
+    <a class="dl" href="https://www.twse.com.tw/zh/trading/foreign/t86.html" target="_blank" rel="noopener">開啟證交所下載頁</a>
+    </div>
+    <div class="col">
+    <label class="slot" data-slot="tpex">
+      <input type="file" accept=".csv,.html,text/csv,text/html" aria-label="選擇上櫃檔案">
+      <h2>上櫃</h2>
+      <p class="src">櫃買中心 三大法人買賣明細</p>
+      <div class="state"></div>
+    </label>
+    <a class="dl" href="https://www.tpex.org.tw/zh-tw/mainboard/trading/major-institutional/detail/day.html" target="_blank" rel="noopener">開啟櫃買下載頁</a>
+    </div>
+  </section>
+
+  <p class="where">上市在證交所頁面的分類項目選「全部(不含權證、牛熊證、可展延牛熊證)」，查詢後按「CSV 下載」。上櫃在櫃買的三大法人買賣明細頁下載 CSV。檔案只在你的瀏覽器裡處理，不會上傳到任何地方。</p>
+
+  <div class="notes" id="notes"></div>
+  <p class="summary" id="summary"></p>
+  <div id="out"></div>
+
+  <footer>
+    <p>排序只依買超股數，低價股因為股數多，容易排在前面。上市與上櫃都用三大法人合計，兩邊定義相同。</p>
+    <p>本工具只整理交易所公開資料，不代表推薦任何個股，也不構成投資建議。</p>
+  </footer>
+</div>
+
+<script>
+// ── 解析與排序核心：規則與 smc_rank.py 完全相同 ──
+const T86_KEY  = '三大法人買賣超股數';
+const TPEX3_KEY = '三大法人買賣超股數合計';                 // 櫃買 三大法人買賣明細
+const TPEX_FOREIGN_KEY = '外資及陸資合計-買賣超(張數)';      // 櫃買 外資彙總表：只用來辨識並擋下
+const TOTAL = 400;   // 總共取幾檔
+const BATCH = 40;    // 每份幾檔（Pine request.security 上限）
+
+// 簡易 CSV 解析，處理引號與 T86 的 ="00403A" 包裝
+function parseCSV(text) {
+  const rows = [];
+  let row = [], field = '', q = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (q) {
+      if (c === '"') {
+        if (text[i + 1] === '"') { field += '"'; i++; } else q = false;
+      } else field += c;
+      continue;
+    }
+    if (c === '"') q = true;
+    else if (c === ',') { row.push(field); field = ''; }
+    else if (c === '\n') { row.push(field); rows.push(row); row = []; field = ''; }
+    else if (c !== '\r') field += c;
+  }
+  if (field !== '' || row.length) { row.push(field); rows.push(row); }
+  return rows;
+}
+
+// 兩個交易所的檔案都是 cp950；big5 解碼器涵蓋 cp950。
+// 代號與數字都是 ASCII，罕見字解不開只影響名稱顯示。
+function decodeFile(buffer) {
+  return parseCSV(new TextDecoder('big5').decode(buffer));
+}
+
+function toInt(s) {
+  s = (s || '').trim().replace(/,/g, '');
+  return /^-?\d+$/.test(s) ? parseInt(s, 10) : null;
+}
+
+function cleanCode(s) {
+  const m = (s || '').match(/[0-9A-Za-z]+/);
+  return m ? m[0] : '';
+}
+
+function findHeader(rows, key) {
+  for (let i = 0; i < Math.min(5, rows.length); i++) if (rows[i].includes(key)) return i;
+  return -1;
+}
+
+function readDate(rows) {
+  const t = (rows[0] && rows[0][0]) || '';
+  const m = t.match(/(\d{1,2})月(\d{1,2})日/);
+  return m ? `${m[1].padStart(2, '0')}月${m[2].padStart(2, '0')}日` : '未知';
+}
+
+// 一律用三大法人合計。回傳 {market, date, recs:[{code, name, net}]}；格式不對丟出 Error
+function parseRows(rows) {
+  const date = readDate(rows);
+
+  let h = findHeader(rows, T86_KEY);
+  if (h >= 0) {
+    const hdr = rows[h];
+    const ic = hdr.indexOf('證券代號'), iname = hdr.indexOf('證券名稱'), iv = hdr.indexOf(T86_KEY);
+    if (ic < 0 || iname < 0) throw new Error('上市檔缺少必要欄位，格式可能改版了');
+    const recs = [];
+    for (const r of rows.slice(h + 1)) {
+      if (r.length <= iv) continue;                 // 附註列
+      const v = toInt(r[iv]);
+      if (v === null) continue;
+      recs.push({ code: cleanCode(r[ic]), name: r[iname].trim(), net: v });
+    }
+    return { market: 'TWSE', date, recs };
+  }
+
+  h = findHeader(rows, TPEX3_KEY);
+  if (h >= 0) {
+    const hdr = rows[h];
+    const ic = hdr.indexOf('代號'), iname = hdr.indexOf('名稱');
+    const iv = hdr.indexOf(TPEX3_KEY);
+    if (ic < 0 || iname < 0) throw new Error('上櫃檔缺少必要欄位，格式可能改版了');
+    const recs = [];
+    for (const r of rows.slice(h + 1)) {
+      if (r.length <= iv) continue;                 // 附註列
+      const v = toInt(r[iv]);
+      if (v === null) continue;
+      recs.push({ code: cleanCode(r[ic]), name: r[iname].trim(), net: v });   // 已是股數
+    }
+    return { market: 'TPEX', date, recs };
+  }
+
+  if (findHeader(rows, TPEX_FOREIGN_KEY) >= 0)
+    throw new Error('這是櫃買的外資及陸資買賣超彙總表，只有外資資料。請改下載三大法人買賣明細（檔名 BIGD 開頭）。');
+
+  throw new Error('認不出這個檔案。上市要用證交所 T86 三大法人買賣超日報，上櫃要用櫃買三大法人買賣明細。');
+}
+
+// 四位數普通股、正買超，依買超股數由大到小（同數依代號）
+function rank(parsedList, excludeDR) {
+  const merged = [];
+  for (const p of parsedList) for (const r of p.recs) merged.push({ market: p.market, ...r });
+  let stocks = merged.filter(x => /^[1-9]\d{3}$/.test(x.code));
+  if (excludeDR) stocks = stocks.filter(x => !x.name.endsWith('-DR'));
+  const excluded = merged.length - stocks.length;
+  stocks = stocks.filter(x => x.net > 0);
+  stocks.sort((a, b) => (b.net - a.net) || (a.code < b.code ? -1 : a.code > b.code ? 1 : 0));
+  const picked = stocks.slice(0, TOTAL);
+  const batches = [];
+  for (let i = 0; i < picked.length; i += BATCH) batches.push(picked.slice(i, i + BATCH));
+  return { merged, excluded, positive: stocks.length, picked, batches };
+}
+
+if (typeof module !== 'undefined') module.exports = { decodeFile, parseRows, rank };
+
+
+const SLOT_MARKET = { twse: 'TWSE', tpex: 'TPEX' };
+const SLOT_NAME   = { twse: '上市', tpex: '上櫃' };
+const state = { twse: null, tpex: null };   // {fileName, rows}
+const fmt = n => n.toLocaleString('en-US');
+const esc = s => s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+async function loadFile(slot, file) {
+  try {
+    const rows = decodeFile(await file.arrayBuffer());
+    state[slot] = { fileName: file.name, rows };
+  } catch (e) {
+    state[slot] = { fileName: file.name, rows: null, error: '讀不到檔案內容：' + e.message };
+  }
+  render();
+}
+
+// 解析每個已放入的檔案，並檢查放對邊
+function parseSlots() {
+  const out = {};
+  for (const slot of ['twse', 'tpex']) {
+    const s = state[slot];
+    if (!s) continue;
+    if (s.error) { out[slot] = { error: s.error }; continue; }
+    try {
+      const p = parseRows(s.rows);
+      if (p.market !== SLOT_MARKET[slot]) {
+        const other = p.market === 'TWSE' ? '上市' : '上櫃';
+        out[slot] = { error: `這是${other}的檔案，請放到「${other}」那一格。` };
+      } else out[slot] = p;
+    } catch (e) { out[slot] = { error: e.message }; }
+  }
+  return out;
+}
+
+function renderSlot(slot, p) {
+  const el = document.querySelector(`.slot[data-slot=${slot}]`);
+  const st = el.querySelector('.state');
+  el.querySelector('.clear')?.remove();
+  el.classList.toggle('loaded', !!state[slot]);
+  if (!state[slot]) {
+    st.innerHTML = '<span class="meta">拖進來，或點一下選檔</span>';
+    return;
+  }
+  const btn = document.createElement('button');
+  btn.type = 'button'; btn.className = 'clear'; btn.textContent = '移除';
+  btn.setAttribute('aria-label', `移除${SLOT_NAME[slot]}檔案`);
+  btn.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); state[slot] = null; el.querySelector('input').value = ''; render(); });
+  el.appendChild(btn);
+  const name = `<div class="fname">${esc(state[slot].fileName)}</div>`;
+  st.innerHTML = p.error
+    ? name + `<div class="err">${esc(p.error)}</div>`
+    : name + `<div class="meta">${p.date}　${fmt(p.recs.length)} 筆</div>`;
+}
+
+function render() {
+  const parsed = parseSlots();
+  renderSlot('twse', parsed.twse || {});
+  renderSlot('tpex', parsed.tpex || {});
+
+  const ok = Object.values(parsed).filter(p => !p.error);
+  const notes = [];
+  const dates = [...new Set(ok.map(p => p.date))];
+  if (dates.length > 1) notes.push(`兩個檔案日期不一致（${dates.join('、')}），確認沒有拿錯天的檔。`);
+
+  const out = document.getElementById('out'), summary = document.getElementById('summary');
+  if (!ok.length) {
+    document.getElementById('notes').innerHTML = '';
+    summary.textContent = '';
+    out.innerHTML = '<div class="empty">先放入至少一個檔案，排序會自動完成。</div>';
+    return;
+  }
+
+  const r = rank(ok, document.getElementById('exdr').checked);
+  if (r.picked.length < TOTAL) notes.push(`正買超只有 ${r.picked.length} 檔，不足 ${TOTAL}，只分出 ${r.batches.length} 批。`);
+  document.getElementById('notes').innerHTML = notes.map(n => `<div class="note">${esc(n)}</div>`).join('');
+
+  const nT = r.merged.filter(x => x.market === 'TWSE').length, nP = r.merged.length - nT;
+  summary.innerHTML = `資料 <b>${dates.join('、')}</b>　原始 上市 ${fmt(nT)}、上櫃 ${fmt(nP)} 筆　排除非普通股 ${fmt(r.excluded)} 筆　正買超 <b>${fmt(r.positive)}</b> 檔，取前 <b>${r.picked.length}</b>`;
+
+  out.innerHTML = `<ol class="batches">${r.batches.map((seg, bi) => {
+    const s = bi * BATCH + 1, e = bi * BATCH + seg.length;
+    const t = seg.filter(x => x.market === 'TWSE').length, pp = seg.length - t;
+    const rows = seg.map((x, i) => `<tr><td>${s + i}</td><td class="m-${x.market}">${x.market}</td><td>${x.code}</td><td>${esc(x.name)}</td><td class="n">${fmt(x.net)}</td></tr>`).join('');
+    return `<li class="batch" data-i="${bi}">
+      <div class="row">
+        <div class="num">${bi + 1}</div>
+        <button type="button" class="info" aria-expanded="false">
+          <div class="line1"><span class="range">第 ${s}–${e} 名</span>
+            <span class="vol">${fmt(seg[0].net)} ~ ${fmt(seg[seg.length - 1].net)} <small>股</small></span></div>
+          <div class="mix" aria-hidden="true"><span class="t" style="width:${t / seg.length * 100}%"></span><span class="p" style="width:${pp / seg.length * 100}%"></span></div>
+          <div class="mixlab"><span class="t">上市 ${t}</span>　<span class="p">上櫃 ${pp}</span></div>
+        </button>
+        <button type="button" class="copy">複製</button>
+      </div>
+      <div class="detail">
+        <div class="fallback"><p>瀏覽器擋住了自動複製，請全選下面的內容後按 ⌘C。</p><textarea readonly></textarea></div>
+        <div class="tbl"><table><thead><tr><th>排名</th><th>市場</th><th>代號</th><th>名稱</th><th class="n">買超股數</th></tr></thead><tbody>${rows}</tbody></table></div>
+      </div>
+    </li>`;
+  }).join('')}</ol>`;
+
+  out.querySelectorAll('.batch').forEach(li => {
+    const seg = r.batches[+li.dataset.i];
+    const text = seg.map(x => `${x.market}:${x.code}`).join('\n');
+    const info = li.querySelector('.info');
+    info.addEventListener('click', () => {
+      const open = li.classList.toggle('open');
+      info.setAttribute('aria-expanded', open);
+    });
+    const btn = li.querySelector('.copy');
+    btn.addEventListener('click', async () => {
+      if (await copyText(text)) {
+        li.classList.remove('fail'); li.classList.add('done');
+        btn.textContent = '已複製';
+      } else {
+        const ta = li.querySelector('textarea');
+        ta.value = text;
+        li.classList.add('open', 'fail');
+        info.setAttribute('aria-expanded', true);
+        ta.focus(); ta.select();
+      }
+    });
+  });
+}
+
+async function copyText(t) {
+  try { await navigator.clipboard.writeText(t); return true; } catch (e) {}
+  const ta = document.createElement('textarea');
+  ta.value = t; ta.style.position = 'fixed'; ta.style.opacity = '0';
+  document.body.appendChild(ta); ta.select();
+  let ok = false;
+  try { ok = document.execCommand('copy'); } catch (e) {}
+  ta.remove();
+  return ok;
+}
+
+// ── 放檔 ──
+document.querySelectorAll('.slot').forEach(el => {
+  const slot = el.dataset.slot, input = el.querySelector('input');
+  input.addEventListener('change', () => { if (input.files[0]) loadFile(slot, input.files[0]); });
+  el.addEventListener('dragover', e => { e.preventDefault(); el.classList.add('over'); });
+  el.addEventListener('dragleave', () => el.classList.remove('over'));
+  el.addEventListener('drop', e => {
+    e.preventDefault(); el.classList.remove('over');
+    if (e.dataTransfer.files[0]) loadFile(slot, e.dataTransfer.files[0]);
+  });
+});
+// 檔案沒丟準時，不要讓瀏覽器直接把檔案打開
+window.addEventListener('dragover', e => e.preventDefault());
+window.addEventListener('drop', e => e.preventDefault());
+
+document.getElementById('exdr').addEventListener('change', render);
+render();
+</script>
+</body>
+</html>
