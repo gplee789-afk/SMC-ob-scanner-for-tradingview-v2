@@ -37,5 +37,6 @@ jobs:
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -m "data: $(git diff --cached --name-only -- 'data/2*.json' | xargs -n1 basename | sed 's/\.json$//' | sort | tr '\n' ' ')"
+          git commit -m "data: $(git diff --cached --name-only -- 'data/2*.json' | xargs -r -n1 basename | sed 's/\.json$//' | sort | tr '\n' ' ')"
+          git pull --rebase -q
           git push

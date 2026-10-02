@@ -1,12 +1,19 @@
 """抓取上市、上櫃的每日行情與三大法人買賣超，存成 data/YYYY-MM-DD.json，並更新 data/index.json。
 
 用法：
-    python scripts/fetch_daily.py                 # 台北時間今天
-    python scripts/fetch_daily.py 2026-10-01 ...  # 指定日期（可多個，用來補資料）
+    python scripts/fetch_daily.py                       # 台北時間今天（順便每週更新一次產業分類）
+    python scripts/fetch_daily.py 2026-10-01 ...        # 指定日期（可多個）
+    python scripts/fetch_daily.py --since 2025-10-01    # 補抓：從昨天往回抓到該日，已有的日期跳過
+        [--until 2026-09-30] [--max-minutes 40] [--delay 4]
+    python scripts/fetch_daily.py --industry            # 只更新產業分類 data/industry.json
 
-只用標準函式庫。非交易日（證交所回傳無資料）時不寫檔、正常結束；
-行情抓不到時以錯誤結束，讓 GitHub Actions 標示失敗。三大法人抓不到時只警告，該欄存 null。
+只用標準函式庫。非交易日（證交所回傳無資料）時不寫檔；三大法人抓不到時只警告，該欄存 null。
+一般模式下行情抓不到會以錯誤結束，讓 GitHub Actions 標示失敗。
+
+補抓模式會放慢請求、遇到阻擋時逐步拉長等待，連續失敗就停下保留進度。結束碼：
+    0 = 範圍內已全部抓完   3 = 到達時間上限，還有沒抓的   4 = 疑似被交易所擋下，先停止
 """
+import argparse
 import datetime
 import json
 import re
@@ -24,19 +31,39 @@ TAIPEI = datetime.timezone(datetime.timedelta(hours=8))
 QUOTE_FIELDS = ['code', 'name', 'amount', 'shares', 'close', 'high', 'low', 'change']
 INST_FIELDS = ['code', 'net']
 
+DELAY = 3.0                                # 同一主機兩次請求的最短間隔（秒）；證交所要求 5 秒內不超過 3 次
+_last_hit = {}
 
-def fetch_json(url, form=None):
+
+def throttle(url):
+    host = urllib.parse.urlsplit(url).netloc
+    wait = _last_hit.get(host, 0) + DELAY - time.monotonic()
+    if wait > 0:
+        time.sleep(wait)
+    _last_hit[host] = time.monotonic()
+
+
+def fetch(url, form=None, retries=3):
     body = urllib.parse.urlencode(form).encode() if form else None
-    for attempt in range(3):
+    for attempt in range(retries):
+        throttle(url)
         try:
             req = urllib.request.Request(url, data=body, headers=HEADERS)
-            with urllib.request.urlopen(req, timeout=30) as r:
-                return json.loads(r.read().decode('utf-8'))
+            with urllib.request.urlopen(req, timeout=60) as r:
+                return r.read()
         except Exception as e:                  # 連線逾時、被暫時擋下等，稍等重試
-            if attempt == 2:
+            if attempt == retries - 1:
                 raise
             print(f'  重試（{e}）', file=sys.stderr)
-            time.sleep(10 * (attempt + 1))
+            time.sleep(15 * (attempt + 1))
+
+
+def fetch_json(url, form=None):
+    raw = fetch(url, form)
+    try:
+        return json.loads(raw.decode('utf-8'))
+    except ValueError:                          # 被擋時常回傳 HTML 警告頁
+        raise RuntimeError('回應不是 JSON，可能被交易所暫時擋下') from None
 
 
 def num(s):
@@ -136,6 +163,40 @@ def tpex_inst(d):
     return [[r[ic].strip(), whole(num(r[iv]))] for r in tables[0]['data'] if CODE.match(r[ic].strip())]
 
 
+# ── 產業分類：證交所 ISIN 證券代碼表（上市 strMode=2、上櫃 strMode=4），表內第 5 欄為產業別 ──
+
+def fetch_industry():
+    mapping = {}
+    for mode in ('2', '4'):
+        html = fetch(f'https://isin.twse.com.tw/isin/C_public.jsp?strMode={mode}').decode('cp950', errors='replace')
+        for tr in re.findall(r'<tr>(.*?)</tr>', html, re.S):
+            tds = [re.sub(r'<[^>]+>', '', td).strip() for td in re.findall(r'<td[^>]*>(.*?)</td>', tr, re.S)]
+            if len(tds) < 5:
+                continue
+            m = re.match(r'^([1-9]\d{3})\s', tds[0].replace('　', ' '))
+            if m:
+                mapping[m.group(1)] = tds[4] or '未分類'           # DR 等沒有產業別
+    if len(mapping) < 1500:
+        raise RuntimeError(f'產業分類只解析出 {len(mapping)} 檔，格式可能改版')
+    DATA.mkdir(exist_ok=True)
+    today = datetime.datetime.now(TAIPEI).date()
+    (DATA / 'industry.json').write_text(json.dumps(
+        {'updated': f'{today:%Y-%m-%d}', 'map': dict(sorted(mapping.items()))},
+        ensure_ascii=False, separators=(',', ':')), encoding='utf-8')
+    print(f'產業分類：{len(mapping)} 檔、{len(set(mapping.values()))} 類')
+
+
+def industry_stale(days=7):
+    p = DATA / 'industry.json'
+    if not p.exists():
+        return True
+    try:
+        updated = datetime.date.fromisoformat(json.loads(p.read_text(encoding='utf-8'))['updated'])
+    except (ValueError, KeyError):
+        return True
+    return (datetime.datetime.now(TAIPEI).date() - updated).days >= days
+
+
 # ── 主流程 ──
 
 def optional(label, fn, d):
@@ -149,13 +210,26 @@ def optional(label, fn, d):
     return rows
 
 
+def day_path(d):
+    return DATA / f'{d:%Y-%m-%d}.json'
+
+
+def complete(d):
+    """這天的檔案存在，且兩邊的三大法人都有資料"""
+    p = day_path(d)
+    if not p.exists():
+        return False
+    j = json.loads(p.read_text(encoding='utf-8'))
+    return all(j.get(m, {}).get('inst') for m in ('TWSE', 'TPEX'))
+
+
 def fetch_day(d):
+    """抓一天。回傳 True = 已寫檔，False = 非交易日。行情抓不到時丟出例外"""
     print(f'{d:%Y-%m-%d}')
     tq = twse_quote(d)
     if tq is None:
         print('  證交所沒有這天的資料（非交易日），略過')
         return False
-    time.sleep(3)                                # 證交所要求放慢請求頻率
     ti = optional('上市三大法人', twse_inst, d)
     tp = tpex_quote(d)
     if tp is None:
@@ -169,8 +243,7 @@ def fetch_day(d):
         'TPEX': {'quote': tp, 'inst': pi},
     }
     DATA.mkdir(exist_ok=True)
-    (DATA / f'{d:%Y-%m-%d}.json').write_text(
-        json.dumps(day, ensure_ascii=False, separators=(',', ':')), encoding='utf-8')
+    day_path(d).write_text(json.dumps(day, ensure_ascii=False, separators=(',', ':')), encoding='utf-8')
     print(f'  上市 {len(tq)} 檔、法人 {len(ti) if ti else "無"}；上櫃 {len(tp)} 檔、法人 {len(pi) if pi else "無"}')
     return True
 
@@ -180,22 +253,69 @@ def write_index():
     (DATA / 'index.json').write_text(json.dumps({'dates': dates}, separators=(',', ':')), encoding='utf-8')
 
 
-def main(args):
-    if args:
-        days = []
-        for a in args:
-            if not re.fullmatch(r'\d{4}-\d{2}-\d{2}', a):
-                sys.exit(f'日期格式要是 YYYY-MM-DD：{a}')
-            days.append(datetime.date.fromisoformat(a))
-    else:
-        days = [datetime.datetime.now(TAIPEI).date()]
-    for i, d in enumerate(days):
-        if i:
-            time.sleep(5)
+def backfill(since, until, max_minutes):
+    """由新到舊逐日補抓。失敗時等 1、3、10 分鐘再試，連續 3 天失敗就停"""
+    deadline = time.monotonic() + max_minutes * 60
+    d, fails, done = until, 0, 0
+    while d >= since:
+        if d.weekday() < 5 and not complete(d):
+            if time.monotonic() > deadline:
+                print(f'到達 {max_minutes} 分鐘上限，本次補了 {done} 天，下次從 {d} 繼續')
+                return 3
+            try:
+                if fetch_day(d):
+                    done += 1
+                fails = 0
+            except Exception as e:
+                fails += 1
+                print(f'  失敗（{e}）', file=sys.stderr)
+                if fails >= 3:
+                    print(f'連續 {fails} 天失敗，可能被交易所擋下，先停止。本次補了 {done} 天', file=sys.stderr)
+                    return 4
+                time.sleep([60, 180, 600][fails - 1])
+                continue                         # 同一天再試
+        d -= datetime.timedelta(days=1)
+    print(f'補抓完成，本次補了 {done} 天')
+    return 0
+
+
+def main():
+    global DELAY
+    ap = argparse.ArgumentParser()
+    ap.add_argument('dates', nargs='*', help='YYYY-MM-DD')
+    ap.add_argument('--since', type=datetime.date.fromisoformat, help='補抓的最早日期')
+    ap.add_argument('--until', type=datetime.date.fromisoformat, help='補抓的最晚日期（預設昨天）')
+    ap.add_argument('--max-minutes', type=float, default=40)
+    ap.add_argument('--delay', type=float, default=None, help='同一主機請求間隔秒數（補抓預設 4）')
+    ap.add_argument('--industry', action='store_true', help='只更新產業分類')
+    a = ap.parse_args()
+
+    if a.industry:
+        fetch_industry()
+        return 0
+
+    if a.since:
+        DELAY = a.delay or 4.0
+        today = datetime.datetime.now(TAIPEI).date()
+        rc = backfill(a.since, a.until or today - datetime.timedelta(days=1), a.max_minutes)
+        if DATA.exists():
+            write_index()
+        return rc
+
+    if a.delay:
+        DELAY = a.delay
+    days = [datetime.date.fromisoformat(s) for s in a.dates] or [datetime.datetime.now(TAIPEI).date()]
+    for d in days:
         fetch_day(d)
     if DATA.exists():
         write_index()
+    if not a.dates and industry_stale():
+        try:
+            fetch_industry()
+        except Exception as e:                   # 產業分類失敗不影響當天行情
+            print(f'警告：產業分類更新失敗（{e}）', file=sys.stderr)
+    return 0
 
 
 if __name__ == '__main__':
-    main(sys.argv[1:])
+    sys.exit(main())
