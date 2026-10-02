@@ -157,14 +157,6 @@ ol.batches { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(
 .copy:hover { opacity: .88; }
 .copy:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .batch.done .copy { background: transparent; color: var(--ink); }
-.acts { display: flex; gap: 8px; }
-.wl {
-  font: inherit; font-size: 14px; padding: 8px 14px; border-radius: 8px; cursor: pointer; white-space: nowrap;
-  border: 1px solid var(--line); background: var(--surface); color: var(--ink);
-}
-.wl:hover { border-color: var(--ink); }
-.wl:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
-.bulk { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; margin: 0 0 12px; font-size: 13px; color: var(--muted); }
 .detail { display: none; padding: 0 4px 18px 84px; }
 .batch.open .detail { display: block; }
 .fallback { display: none; margin-bottom: 12px; }
@@ -184,7 +176,7 @@ td.m-TWSE { color: var(--twse); } td.m-TPEX { color: var(--tpex); }
   .slots { grid-template-columns: 1fr; }
   .row { grid-template-columns: 40px 1fr; }
   .num { font-size: 24px; }
-  .acts { grid-column: 2; justify-self: start; }
+  .copy { grid-column: 2; justify-self: start; }
   .detail { padding-left: 4px; }
 }
 @media (prefers-reduced-motion: no-preference) {
@@ -639,13 +631,7 @@ function render() {
   const head = cols.map(c => `<th${c.left ? '' : ' class="n"'}>${c.th}</th>`).join('');
   const metric = SORT_FMT[sort];
 
-  // 觀察清單檔：TradingView「匯入清單」接受逗號分隔的代號，### 開頭為分段標題
-  const tag = `${(useAuto ? document.getElementById('date').value : dates.join('_')) || '名單'}_${SORTS[sort].label}`;
-  const section = (seg, bi) => `###第 ${bi + 1} 批（第 ${bi * BATCH + 1}–${bi * BATCH + seg.length} 名）,` + seg.map(x => `${x.market}:${x.code}`).join(',');
-
-  out.innerHTML = `<div class="bulk"><button type="button" class="wl" id="wlall">全部 ${r.picked.length} 檔下載成一份觀察清單</button>
-    <span>匯入方式：TradingView 右側觀察清單 → 點清單名稱 → 「匯入清單」，選下載的 .txt 檔。每批是清單裡的一段。</span></div>`
-    + `<ol class="batches">${r.batches.map((seg, bi) => {
+  out.innerHTML = `<ol class="batches">${r.batches.map((seg, bi) => {
     const s = bi * BATCH + 1, e = bi * BATCH + seg.length;
     const t = seg.filter(x => x.market === 'TWSE').length, pp = seg.length - t;
     const rows = seg.map((x, i) => `<tr><td>${s + i}</td><td class="m-${x.market}">${x.market}</td><td>${x.code}</td><td>${esc(x.name)}</td>${cols.map(c => c.td(x)).join('')}</tr>`).join('');
@@ -658,10 +644,7 @@ function render() {
           <div class="mix" aria-hidden="true"><span class="t" style="width:${t / seg.length * 100}%"></span><span class="p" style="width:${pp / seg.length * 100}%"></span></div>
           <div class="mixlab"><span class="t">上市 ${t}</span>　<span class="p">上櫃 ${pp}</span></div>
         </button>
-        <div class="acts">
-          <button type="button" class="copy">複製</button>
-          <button type="button" class="wl" title="下載成 TradingView 可匯入的觀察清單檔">觀察清單</button>
-        </div>
+        <button type="button" class="copy">複製</button>
       </div>
       <div class="detail">
         <div class="fallback"><p>瀏覽器擋住了自動複製，請全選下面的內容後複製。</p><textarea readonly></textarea></div>
@@ -670,13 +653,8 @@ function render() {
     </li>`;
   }).join('')}</ol>`;
 
-  document.getElementById('wlall').addEventListener('click', () =>
-    downloadText(`${tag}_前${r.picked.length}檔.txt`, r.batches.map(section).join(',')));
-
   out.querySelectorAll('.batch').forEach(li => {
     const seg = r.batches[+li.dataset.i];
-    li.querySelector('.wl').addEventListener('click', () =>
-      downloadText(`${tag}_第${+li.dataset.i + 1}批.txt`, section(seg, +li.dataset.i)));
     const text = seg.map(x => `${x.market}:${x.code}`).join('\n');
     const info = li.querySelector('.info');
     info.addEventListener('click', () => {
@@ -697,14 +675,6 @@ function render() {
       }
     });
   });
-}
-
-function downloadText(name, text) {
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([text], { type: 'text/plain;charset=utf-8' }));
-  a.download = name;
-  document.body.appendChild(a); a.click(); a.remove();
-  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
 
 async function copyText(t) {
