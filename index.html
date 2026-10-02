@@ -46,13 +46,15 @@ h1 { margin: 0; font-size: 30px; font-weight: 900; letter-spacing: .02em; line-h
 .check input { accent-color: var(--ink); width: 16px; height: 16px; }
 .check.off, .field.off { opacity: .5; cursor: not-allowed; }
 .indpick { position: relative; font-size: 14px; }
+/* 固定寬度：選不同產業時按鈕大小不變，旁邊的控制項不會跟著跳動 */
 .indpick summary {
+  display: block; position: relative; box-sizing: border-box; width: 19em; max-width: calc(100vw - 32px);
   list-style: none; cursor: pointer; color: var(--ink); background: var(--surface);
-  border: 1px solid var(--line); border-radius: 6px; padding: 4px 10px; max-width: 18em;
+  border: 1px solid var(--line); border-radius: 6px; padding: 6px 30px 6px 12px; line-height: 1.4;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .indpick summary::-webkit-details-marker { display: none; }
-.indpick summary::after { content: ' ▾'; color: var(--muted); }
+.indpick summary::after { content: '▾'; position: absolute; right: 12px; top: 50%; transform: translateY(-50%); color: var(--muted); }
 .indpick summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
 .indpick[open] summary { border-color: var(--ink); }
 .indpanel {
