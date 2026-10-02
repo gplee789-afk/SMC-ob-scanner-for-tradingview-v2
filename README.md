@@ -24,6 +24,9 @@ flowchart LR
 | `pine/smc_ob_screener.pine` | 多商品掃描器：一次掃 40 檔，結果排成表格，一個警報涵蓋全部 |
 | `pine/smc_order_blocks.pine` | 單一商品指標：把 OB、BOS / CHoCH 畫在圖上，用來確認 |
 | `docs/tutorial.md` | 新手教學：TradingView 基本操作與 SMC / Order Block 觀念 |
+| `scripts/fetch_daily.py` | 抓取每日行情與三大法人資料，存到 `data/` |
+| `.github/workflows/fetch-daily.yml` | GitHub Actions 排程：每個交易日 18:00 自動執行上面的程式 |
+| `data/` | 自動抓取的每日資料，網頁版會直接讀取 |
 
 ---
 
@@ -31,13 +34,17 @@ flowchart LR
 
 ### 1. 產生今天的名單
 
+**用網頁版（推薦）：** 打開本專案的網頁版（見下方「網頁版」），資料來源會自動選「自動抓取」並載入最新一個交易日，直接跳到第 4 步。每個交易日 18:00 後更新，也可以從「日期」選以前的日子。
+
+**手動放檔：** 直接打開本機的 `index.html`，或資料來源選「手動放檔」時，照以下步驟下載檔案：
+
 1. 收盤後下載每日行情（必填，要同一天）：
    - 上市：[證交所每日收盤行情](https://www.twse.com.tw/zh/trading/historical/mi-index.html)。分類項目選「全部(不含大盤、指數、權證、牛熊證、可展延牛熊證)」，查詢後按「CSV 下載」，檔名是 `MI_INDEX` 開頭。
    - 上櫃：[櫃買中心上櫃股票行情](https://www.tpex.org.tw/zh-tw/mainboard/trading/info/pricing.html)。選日期後下載 CSV，檔名是 `RSTA3104` 開頭。不要下載成興櫃行情，工具會擋下來。
 2. 想只看法人在買的股票，再下載三大法人檔（選填）：
    - 上市：[證交所三大法人買賣超日報](https://www.twse.com.tw/zh/trading/foreign/t86.html)。分類項目選「全部(不含權證、牛熊證、可展延牛熊證)」，查詢後按「CSV 下載」。
    - 上櫃：[櫃買中心三大法人買賣明細](https://www.tpex.org.tw/zh-tw/mainboard/trading/major-institutional/detail/day.html)。選日期後下載 CSV，檔名是 `BIGD_` 開頭。
-3. 用瀏覽器打開 `index.html`（或本專案的網頁版，見下方「網頁版」），把檔案拖進對應的格子：上市、上櫃各有「每日行情」和「三大法人」兩格。只放上市或只放上櫃也可以。
+3. 用瀏覽器打開 `index.html`，把檔案拖進對應的格子：上市、上櫃各有「每日行情」和「三大法人」兩格。只放上市或只放上櫃也可以。
 4. 放進去就會自動依成交金額排好。要換排序方式，用右上角的「排序依據」（見下表）。放了三大法人檔的話，也可以勾選「只保留三大法人買超」。
 5. 每一列是一批，按「複製」取得那批的 40 行代號。
 
@@ -104,13 +111,18 @@ OB 剛成立的那一根不會發警報，已經在 OB 裡的也不會重複發�
 
 ---
 
-## 網頁版
+## 網頁版與自動資料
 
-`index.html` 是單一檔案，不需要網路也能用，但手機直接打開本機 HTML 檔不一定能執行。要讓任何裝置都能用，可以開啟 GitHub Pages：
+網頁版：https://gplee789-afk.github.io/SMC-ob-scanner-for-tradingview-v2/
 
-1. 在 repo 的 **Settings → Pages**。
-2. Source 選 **Deploy from a branch**，分支選 `main`，資料夾選 `/ (root)`。
-3. 儲存後，網址會是 `https://<帳號>.github.io/<repo 名稱>/`。
+GitHub Actions 每個交易日台北時間 18:00（GitHub 排程可能延遲）執行 `scripts/fetch_daily.py`，從證交所與櫃買中心抓取當天的行情與三大法人資料，存成 `data/YYYY-MM-DD.json` 並提交到 repo。網頁版打開時會直接讀取這些資料，不需要下載任何檔案。
+
+- **補抓或重抓：** 到 repo 的 **Actions → 抓取每日行情 → Run workflow**，在「補抓日期」填 `2026-10-01` 這樣的日期（多個用空白分隔），留空為今天。
+- **抓取失敗：** 交易所偶爾會擋雲端主機的連線，Actions 會標示失敗並寄信通知。過一陣子用上面的方式重抓，或當天改用「手動放檔」。三大法人若當天還沒公布，該部分會存成空的，網頁上會提示。
+- **在自己電腦上抓：** `python scripts/fetch_daily.py 2026-10-02`，只需要 Python 3，不用安裝其他套件。
+- **自己架一份：** fork 本專案後，在 **Settings → Pages** 選 **Deploy from a branch**、分支 `main`、資料夾 `/ (root)`，並確認 **Actions** 已啟用。
+
+直接打開本機的 `index.html` 讀不到自動資料（瀏覽器限制），會自動改用手動放檔。
 
 ---
 

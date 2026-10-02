@@ -29,6 +29,7 @@
   --err-bg: #3A1D22; --focus: #7EA2DC;
 }
 *, *::before, *::after { box-sizing: inherit; }
+[hidden] { display: none !important; }
 html { scroll-padding-top: env(safe-area-inset-top, 0px); }
 body {
   margin: 0; background: var(--bg); color: var(--ink);
@@ -51,6 +52,13 @@ h1 { margin: 0; font-size: 30px; font-weight: 900; letter-spacing: .02em; line-h
 }
 .field input { width: 5em; }
 .field select:focus-visible, .field input:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+
+.auto {
+  display: flex; flex-wrap: wrap; gap: 10px 20px; align-items: center; margin-bottom: 20px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 14px 18px;
+}
+.auto .meta { font-size: 13px; color: var(--muted); }
+.auto .meta.bad { color: var(--buy); }
 
 .slots { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px; }
 .col { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
@@ -155,7 +163,7 @@ td.m-TWSE { color: var(--twse); } td.m-TPEX { color: var(--tpex); }
   <header>
     <div>
       <h1>台股名單分批</h1>
-      <p class="lede">丟入上市、上櫃的每日行情檔，依成交金額（或漲幅、振幅、法人買超等其他項目）由大到小排序，取前 400 檔、每 40 檔一批，複製後可以直接貼進 TradingView 多商品腳本的代號框（Pine 的 request.security 一次最多 40 檔）。只放一邊也可以；三大法人檔為選填，放了之後可以只保留法人買超的股票。</p>
+      <p class="lede">讀取每天自動抓取的上市、上櫃行情（或手動丟入行情檔），依成交金額（或漲幅、振幅、法人買超等其他項目）由大到小排序，取前 400 檔、每 40 檔一批，複製後可以直接貼進 TradingView 多商品腳本的代號框（Pine 的 request.security 一次最多 40 檔）。只放一邊也可以；三大法人檔為選填，放了之後可以只保留法人買超的股票。</p>
     </div>
     <div class="controls">
       <label class="field">排序依據
@@ -176,7 +184,18 @@ td.m-TWSE { color: var(--twse); } td.m-TPEX { color: var(--tpex); }
     </div>
   </header>
 
-  <section class="slots">
+  <section class="auto" id="auto" hidden>
+    <label class="field">資料來源
+      <select id="src">
+        <option value="auto">自動抓取</option>
+        <option value="manual">手動放檔</option>
+      </select>
+    </label>
+    <label class="field" id="datewrap">日期 <select id="date"></select></label>
+    <span class="meta" id="autostat"></span>
+  </section>
+
+  <section class="slots" id="slots">
     <div class="col" data-market="twse">
       <h2>上市</h2>
       <label class="slot" data-slot="twse-quote">
@@ -213,7 +232,7 @@ td.m-TWSE { color: var(--twse); } td.m-TPEX { color: var(--tpex); }
     </div>
   </section>
 
-  <div class="where">
+  <div class="where" id="where">
     <p><b>行情：</b>上市在證交所「每日收盤行情」的分類項目選「全部(不含大盤、指數、權證、牛熊證、可展延牛熊證)」，查詢後按「CSV 下載」（檔名 <code>MI_INDEX</code> 開頭）。上櫃在櫃買「上櫃股票行情」選日期後下載 CSV（檔名 <code>RSTA3104</code> 開頭）。</p>
     <p><b>三大法人（選填）：</b>上市在證交所 T86 分類項目選「全部(不含權證、牛熊證、可展延牛熊證)」後下載 CSV；上櫃在櫃買三大法人買賣明細下載 CSV（檔名 <code>BIGD</code> 開頭）。</p>
     <p>所有檔案要同一天。檔案只在你的瀏覽器裡處理，不會上傳到任何地方。</p>
@@ -414,6 +433,8 @@ if (typeof module !== 'undefined') module.exports = { decodeFile, parseRows, ran
 
 
 const SLOTS = ['twse-quote', 'twse-inst', 'tpex-quote', 'tpex-inst'];
+let source = 'manual';                                       // auto：讀 data/ 的自動資料；manual：手動放檔
+const auto = { cache: {}, current: null, status: '載入中…' };
 const MARKET_NAME = { TWSE: '上市', TPEX: '上櫃' };
 const KIND_NAME   = { quote: '每日行情', inst: '三大法人' };
 const slotInfo = s => { const [m, k] = s.split('-'); return { market: m.toUpperCase(), kind: k }; };
@@ -479,10 +500,16 @@ function renderSlot(slot, p) {
 }
 
 function render() {
-  const parsed = parseSlots();
-  for (const slot of SLOTS) renderSlot(slot, parsed[slot] || {});
-
-  const ok = Object.values(parsed).filter(p => !p.error);
+  const useAuto = source === 'auto';
+  document.getElementById('slots').hidden = useAuto;
+  document.getElementById('where').hidden = useAuto;
+  let ok;
+  if (useAuto) ok = auto.current || [];
+  else {
+    const parsed = parseSlots();
+    for (const slot of SLOTS) renderSlot(slot, parsed[slot] || {});
+    ok = Object.values(parsed).filter(p => !p.error);
+  }
   const quotes = ok.filter(p => p.kind === 'quote'), insts = ok.filter(p => p.kind === 'inst');
   const hasInst = m => insts.some(p => p.market === m);
 
@@ -522,7 +549,7 @@ function render() {
   if (!quotes.length) {
     document.getElementById('notes').innerHTML = notes.map(n => `<div class="note">${esc(n)}</div>`).join('');
     summary.textContent = '';
-    out.innerHTML = '<div class="empty">先放入至少一個每日行情檔，排序會自動完成。</div>';
+    out.innerHTML = `<div class="empty">${esc(useAuto ? auto.status : '先放入至少一個每日行情檔，排序會自動完成。')}</div>`;
     return;
   }
 
@@ -531,7 +558,7 @@ function render() {
   document.getElementById('notes').innerHTML = notes.map(n => `<div class="note">${esc(n)}</div>`).join('');
 
   const nT = r.merged.filter(x => x.market === 'TWSE').length, nP = r.merged.length - nT;
-  summary.innerHTML = `資料 <b>${dates.join('、')}</b>　原始 上市 ${fmt(nT)}、上櫃 ${fmt(nP)} 筆　排除 ETF、權證等非普通股 ${fmt(r.excluded)} 筆　有成交 <b>${fmt(r.traded)}</b> 檔`
+  summary.innerHTML = `資料 <b>${dates.join('、')}</b>　原始 上市 ${fmt(nT)}、上櫃 ${fmt(nP)} 筆　${r.excluded ? `排除 ETF、權證等非普通股 ${fmt(r.excluded)} 筆　` : ''}有成交 <b>${fmt(r.traded)}</b> 檔`
     + (r.belowMin ? `　成交金額未達 ${minYi} 億排除 ${fmt(r.belowMin)} 檔` : '')
     + (instOnly ? `　法人非買超排除 ${fmt(r.instDropped)} 檔` : '')
     + (r.unrankable ? `　無法計算${SORTS[sort].label}排除 ${fmt(r.unrankable)} 檔` : '')
@@ -607,6 +634,73 @@ async function copyText(t) {
   return ok;
 }
 
+// ── 自動資料：GitHub Actions 每個交易日存到 data/，透過 GitHub Pages 讀取。
+//    直接打開本機的 index.html 時讀不到，維持手動放檔 ──
+const WEEK = '日一二三四五六';
+
+// data/YYYY-MM-DD.json → 與 parseRows 相同形狀的陣列
+function fromAuto(j) {
+  const [, mm, dd] = j.date.split('-');
+  const date = `${mm}月${dd}日`;
+  const out = [];
+  for (const market of ['TWSE', 'TPEX']) {
+    const m = j[market] || {};
+    if (m.quote) out.push({ market, kind: 'quote', date,
+      recs: m.quote.map(([code, name, value, shares, close, high, low, change]) => ({ code, name, value, shares, close, high, low, change })) });
+    if (m.inst) out.push({ market, kind: 'inst', date, recs: m.inst.map(([code, value]) => ({ code, value })) });
+  }
+  return out;
+}
+
+function setStat(text, bad = false) {
+  const el = document.getElementById('autostat');
+  el.textContent = text; el.classList.toggle('bad', bad);
+}
+
+async function loadAutoDate(d) {
+  auto.current = null; auto.status = '載入中…'; setStat(''); render();
+  try {
+    if (!auto.cache[d]) {
+      const r = await fetch(`data/${d}.json`, { cache: 'no-cache' });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      auto.cache[d] = fromAuto(await r.json());
+    }
+    auto.current = auto.cache[d];
+    const miss = ['TWSE', 'TPEX'].filter(m => !auto.current.some(p => p.market === m && p.kind === 'inst'));
+    if (miss.length) setStat(`${miss.map(m => MARKET_NAME[m]).join('、')}三大法人這天沒有抓到`, true);
+    else setStat('每個交易日 18:00 後自動更新');
+  } catch (e) {
+    auto.status = `讀取 ${d} 的資料失敗（${e.message}），可以改用「手動放檔」。`;
+    setStat('讀取失敗', true);
+  }
+  render();
+}
+
+async function initAuto() {
+  let idx;
+  try {
+    const r = await fetch('data/index.json', { cache: 'no-cache' });
+    if (!r.ok) return;
+    idx = await r.json();
+  } catch (e) { return; }
+  if (!idx.dates || !idx.dates.length) return;
+  document.getElementById('date').innerHTML = idx.dates
+    .map(d => `<option value="${d}">${d}（${WEEK[new Date(d + 'T00:00:00').getDay()]}）</option>`).join('');
+  document.getElementById('auto').hidden = false;
+  if (SLOTS.some(s => state[s])) { document.getElementById('src').value = 'manual'; return; }   // 已經手動放檔就不切換
+  source = 'auto';
+  loadAutoDate(idx.dates[0]);
+}
+
+document.getElementById('src').addEventListener('change', e => {
+  source = e.target.value;
+  document.getElementById('datewrap').hidden = source !== 'auto';
+  document.getElementById('autostat').hidden = source !== 'auto';
+  if (source === 'auto' && !auto.current) loadAutoDate(document.getElementById('date').value);
+  else render();
+});
+document.getElementById('date').addEventListener('change', e => loadAutoDate(e.target.value));
+
 // ── 放檔 ──
 document.querySelectorAll('.slot').forEach(el => {
   const slot = el.dataset.slot, input = el.querySelector('input');
@@ -627,6 +721,7 @@ document.getElementById('instonly').addEventListener('change', render);
 document.getElementById('sort').addEventListener('change', render);
 document.getElementById('minamt').addEventListener('input', render);
 render();
+initAuto();
 </script>
 </body>
 </html>
