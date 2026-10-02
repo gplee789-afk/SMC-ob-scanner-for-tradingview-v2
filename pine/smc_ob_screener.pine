@@ -27,6 +27,8 @@ symTxt = input.text_area(
 
 // ═══════════════ ③ 顯示 ═══════════════
 showRows = input.int(20, "顯示前幾名", minval = 5, maxval = 40, group = G_DISP)
+perCol   = input.int(5, "每欄幾檔", minval = 5, maxval = 40, group = G_DISP,
+     tooltip = "表格每排滿幾檔就換到右邊新的一欄。5 = 每欄 5 檔，顯示 20 檔時排成 4 欄；設成跟「顯示前幾名」一樣就是單欄。")
 txtSize  = input.string("normal", "字級", options = ["small", "normal", "large", "huge"], group = G_DISP)
 tblPos   = input.string("正中", "表格位置", options = ["正中", "中上", "中下", "右上", "右下", "左上", "左下"], group = G_DISP)
 
@@ -330,25 +332,34 @@ for i = 0 to n - 1
         msg := msg + sym + " [" + tf + "] 進入空方OB " + str.tostring(sBtm, format.mintick) + "~" + str.tostring(sTop, format.mintick) + "\n"
 
 // ═══════════════ 表格 ═══════════════
-var table t = table.new(f_pos(), 2, 41, border_width = 0, frame_width = 1,
+// 每欄 perCol 檔，排滿換到右邊。每欄佔 3 個表格欄：代號、結果、與下一欄之間的間隔
+// 最多 40 / 5 = 8 欄 → 24 個表格欄；最多 40 + 1（表頭）列
+var table t = table.new(f_pos(), 24, 41, border_width = 0, frame_width = 1,
      frame_color = C_LINE, border_color = C_LINE)
 
 if barstate.islast and n > 0
-    table.clear(t, 0, 0, 1, 40)
-    order = array.sort_indices(colScore, order.ascending)
-    rows  = math.min(n, showRows)
+    table.clear(t, 0, 0, 23, 40)
+    order  = array.sort_indices(colScore, order.ascending)
+    rows   = math.min(n, showRows)
+    groups = math.ceil(rows / perCol)
 
-    table.cell(t, 0, 0, "代號", bgcolor = C_HEAD, text_color = C_HEADTXT, text_size = f_size(), text_halign = text.align_left)
-    table.cell(t, 1, 0, tf + "m", bgcolor = C_HEAD, text_color = C_HEADTXT, text_size = f_size())
+    for g = 0 to groups - 1
+        c = g * 3
+        table.cell(t, c,     0, "代號", bgcolor = C_HEAD, text_color = C_HEADTXT, text_size = f_size(), text_halign = text.align_left)
+        table.cell(t, c + 1, 0, tf + "m", bgcolor = C_HEAD, text_color = C_HEADTXT, text_size = f_size())
+        if g < groups - 1
+            table.cell(t, c + 2, 0, "", width = 0.5)
 
     for r = 0 to rows - 1
         i    = array.get(order, r)
         hit  = array.get(colHit, i)
-        rowBg = hit ? C_ROW_HIT : (r % 2 == 0 ? C_ROW_A : C_ROW_B)
+        c    = math.floor(r / perCol) * 3
+        row  = r % perCol + 1
+        rowBg = hit ? C_ROW_HIT : (row % 2 == 1 ? C_ROW_A : C_ROW_B)
 
-        table.cell(t, 0, r + 1, array.get(colSym, i), bgcolor = rowBg,
+        table.cell(t, c, row, array.get(colSym, i), bgcolor = rowBg,
              text_color = hit ? color.white : C_SYMTXT, text_size = f_size(), text_halign = text.align_left)
-        table.cell(t, 1, r + 1, array.get(colTxt, i),
+        table.cell(t, c + 1, row, array.get(colTxt, i),
              bgcolor = na(array.get(colBg, i)) ? rowBg : array.get(colBg, i),
              text_color = array.get(colFg, i), text_size = f_size())
 
