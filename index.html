@@ -43,7 +43,14 @@ h1 { margin: 0; font-size: 30px; font-weight: 900; letter-spacing: .02em; line-h
 .controls { display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: center; }
 .check { display: inline-flex; gap: 6px; align-items: center; font-size: 14px; color: var(--muted); cursor: pointer; }
 .check input { accent-color: var(--ink); width: 16px; height: 16px; }
-.check.off { opacity: .5; cursor: not-allowed; }
+.check.off, .field.off { opacity: .5; cursor: not-allowed; }
+.field { display: inline-flex; gap: 6px; align-items: center; font-size: 14px; color: var(--muted); }
+.field select, .field input {
+  font: inherit; font-size: 14px; color: var(--ink); background: var(--surface);
+  border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px;
+}
+.field input { width: 5em; }
+.field select:focus-visible, .field input:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
 
 .slots { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px; }
 .col { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
@@ -148,9 +155,22 @@ td.m-TWSE { color: var(--twse); } td.m-TPEX { color: var(--tpex); }
   <header>
     <div>
       <h1>台股名單分批</h1>
-      <p class="lede">丟入上市、上櫃的每日行情檔，依成交金額由大到小排序，取前 400 檔、每 40 檔一批，複製後可以直接貼進 TradingView 多商品腳本的代號框（Pine 的 request.security 一次最多 40 檔）。只放一邊也可以；三大法人檔為選填，放了之後可以只保留法人買超的股票。</p>
+      <p class="lede">丟入上市、上櫃的每日行情檔，依成交金額（或漲幅、振幅、法人買超等其他項目）由大到小排序，取前 400 檔、每 40 檔一批，複製後可以直接貼進 TradingView 多商品腳本的代號框（Pine 的 request.security 一次最多 40 檔）。只放一邊也可以；三大法人檔為選填，放了之後可以只保留法人買超的股票。</p>
     </div>
     <div class="controls">
+      <label class="field">排序依據
+        <select id="sort">
+          <option value="amount" selected>成交金額</option>
+          <option value="up">漲幅</option>
+          <option value="down">跌幅</option>
+          <option value="range">振幅</option>
+          <option value="netAmt" data-inst>法人買超金額</option>
+          <option value="netRatio" data-inst>法人買超占成交量</option>
+        </select>
+      </label>
+      <label class="field" id="minwrap" title="依成交金額以外的項目排序時，先排除成交太少的股票">最低成交金額
+        <input type="number" id="minamt" min="0" step="0.1" value="0.5" inputmode="decimal"> 億
+      </label>
       <label class="check"><input type="checkbox" id="exdr">排除 DR</label>
       <label class="check off" id="instwrap" title="放入三大法人檔後才能使用"><input type="checkbox" id="instonly" disabled>只保留三大法人買超</label>
     </div>
@@ -204,17 +224,21 @@ td.m-TWSE { color: var(--twse); } td.m-TPEX { color: var(--tpex); }
   <div id="out"></div>
 
   <footer>
-    <p>排序依交易所公布的成交金額（含零股、盤後定價、鉅額交易），上市與上櫃定義相同。勾選「只保留三大法人買超」時，先排除三大法人賣超或當天沒有法人進出的股票，再依成交金額排序。</p>
+    <p>成交金額為交易所公布值（含零股、盤後定價、鉅額交易），上市與上櫃定義相同。漲跌幅與振幅以昨收（收盤 − 漲跌）為基準；法人買超金額 = 三大法人買賣超股數 × 收盤價，占成交量 = 買賣超股數 ÷ 成交股數。依成交金額以外的項目排序時，會先排除成交金額低於設定值的股票，避免冷門股擠進名單。</p>
+    <p>勾選「只保留三大法人買超」時，先排除三大法人賣超或當天沒有法人進出的股票，再依所選項目排序。</p>
     <p>本工具只整理交易所公開資料，不代表推薦任何個股，也不構成投資建議。</p>
   </footer>
 </div>
 
 <script>
 // ── 解析與排序核心 ──
-const TWSE_QUOTE_KEYS = ['證券代號', '證券名稱', '成交金額'];          // 證交所 每日收盤行情 MI_INDEX
-const TPEX_QUOTE_KEYS = ['代號', '名稱', '成交金額(元)'];              // 櫃買 上櫃股票行情 RSTA3104
-const TWSE_INST_KEYS  = ['證券代號', '證券名稱', '三大法人買賣超股數'];  // 證交所 T86
-const TPEX_INST_KEYS  = ['代號', '名稱', '三大法人買賣超股數合計'];      // 櫃買 三大法人買賣明細 BIGD
+// 各檔案的欄名。value 是排序與篩選必備的欄位，其餘欄位缺值時記為 null
+const TWSE_QUOTE = { code: '證券代號', name: '證券名稱', value: '成交金額', shares: '成交股數',      // 證交所 每日收盤行情 MI_INDEX
+                     close: '收盤價', high: '最高價', low: '最低價', sign: '漲跌(+/-)', change: '漲跌價差' };
+const TPEX_QUOTE = { code: '代號', name: '名稱', value: '成交金額(元)', shares: '成交股數',          // 櫃買 上櫃股票行情 RSTA3104
+                     close: '收盤', high: '最高', low: '最低', change: '漲跌' };
+const TWSE_INST  = { code: '證券代號', name: '證券名稱', value: '三大法人買賣超股數' };              // 證交所 T86
+const TPEX_INST  = { code: '代號', name: '名稱', value: '三大法人買賣超股數合計' };                  // 櫃買 三大法人買賣明細 BIGD
 const TPEX_FOREIGN_KEY = '外資及陸資合計-買賣超(張數)';                 // 櫃買 外資彙總表：只用來辨識並擋下
 const TOTAL = 400;   // 總共取幾檔
 const BATCH = 40;    // 每份幾檔（Pine request.security 上限）
@@ -251,6 +275,12 @@ function toInt(s) {
   return /^-?\d+$/.test(s) ? parseInt(s, 10) : null;
 }
 
+// 價格類欄位：「+53.00」「-0.04 」「--」等，非數字回傳 null
+function toNum(s) {
+  s = (s || '').trim().replace(/,/g, '');
+  return /^[+-]?\d+(\.\d+)?$/.test(s) ? parseFloat(s) : null;
+}
+
 function cleanCode(s) {
   const m = (s || '').match(/[0-9A-Za-z]+/);
   return m ? m[0] : '';
@@ -273,21 +303,28 @@ function readDate(rows) {
   return '未知';
 }
 
-function extract(rows, h, [codeKey, nameKey, valKey]) {
+function extract(rows, h, cols) {
   const hdr = rows[h];
-  const ic = hdr.indexOf(codeKey), iname = hdr.indexOf(nameKey), iv = hdr.indexOf(valKey);
+  const idx = Object.fromEntries(Object.entries(cols).map(([k, name]) => [k, hdr.indexOf(name)]));
   const recs = [];
   for (const r of rows.slice(h + 1)) {
-    if (r.length <= iv) continue;                 // 附註、空白、小計列
-    const v = toInt(r[iv]);
+    if (r.length <= idx.value) continue;          // 附註、空白、小計列
+    const v = toInt(r[idx.value]);
     if (v === null) continue;                     // 下一段的表頭
-    recs.push({ code: cleanCode(r[ic]), name: r[iname].trim(), value: v });
+    const rec = { code: cleanCode(r[idx.code]), name: r[idx.name].trim(), value: v };
+    for (const k of ['shares', 'close', 'high', 'low', 'change']) if (k in idx) rec[k] = toNum(r[idx[k]]);
+    if ('sign' in idx && rec.change !== null) {   // 證交所的漲跌方向在另一欄，X 為不比價
+      const sg = r[idx.sign] || '';
+      rec.change = sg.includes('X') ? null : sg.includes('-') ? -rec.change : rec.change;
+    }
+    recs.push(rec);
   }
   return recs;
 }
 
-// 回傳 {market, kind, date, recs:[{code, name, value}]}；
-// kind 為 quote（value = 成交金額，元）或 inst（value = 三大法人買賣超，股）。格式不對丟出 Error
+// 回傳 {market, kind, date, recs:[{code, name, value, ...}]}；
+// kind 為 quote（value = 成交金額，元；另有成交股數、收盤、最高、最低、漲跌）
+// 或 inst（value = 三大法人買賣超，股）。格式不對丟出 Error
 function parseRows(rows) {
   const date = readDate(rows);
   const title = ((rows[0] && rows[0][0]) || '');
@@ -295,14 +332,14 @@ function parseRows(rows) {
     throw new Error('這是興櫃股票行情，TradingView 查不到興櫃股票。請改下載櫃買的「上櫃股票行情」（檔名 RSTA3104 開頭）。');
 
   const kinds = [
-    ['TWSE', 'quote', TWSE_QUOTE_KEYS],
-    ['TPEX', 'quote', TPEX_QUOTE_KEYS],
-    ['TWSE', 'inst',  TWSE_INST_KEYS],
-    ['TPEX', 'inst',  TPEX_INST_KEYS],
+    ['TWSE', 'quote', TWSE_QUOTE],
+    ['TPEX', 'quote', TPEX_QUOTE],
+    ['TWSE', 'inst',  TWSE_INST],
+    ['TPEX', 'inst',  TPEX_INST],
   ];
-  for (const [market, kind, keys] of kinds) {
-    const h = findHeader(rows, keys, kind === 'inst' ? 5 : rows.length);
-    if (h >= 0) return { market, kind, date, recs: extract(rows, h, keys) };
+  for (const [market, kind, cols] of kinds) {
+    const h = findHeader(rows, [cols.code, cols.name, cols.value], kind === 'inst' ? 5 : rows.length);
+    if (h >= 0) return { market, kind, date, recs: extract(rows, h, cols) };
   }
 
   if (findHeader(rows, [TPEX_FOREIGN_KEY], 5) >= 0)
@@ -311,9 +348,32 @@ function parseRows(rows) {
   throw new Error('認不出這個檔案。行情要用證交所「每日收盤行情」或櫃買「上櫃股票行情」，三大法人要用證交所 T86 或櫃買三大法人買賣明細。');
 }
 
-// 四位數普通股、有成交，依成交金額由大到小（同額依代號）。
+// 排序項目。key 回傳 null 的股票無法排序，不列入名單；全部由大到小排
+const SORTS = {
+  amount:   { label: '成交金額',         key: x => x.amount },
+  up:       { label: '漲幅',             key: x => x.pct },
+  down:     { label: '跌幅',             key: x => x.pct === null ? null : -x.pct },
+  range:    { label: '振幅',             key: x => x.range },
+  netAmt:   { label: '法人買超金額',     key: x => x.netAmt,   inst: true },
+  netRatio: { label: '法人買超占成交量', key: x => x.netRatio, inst: true },
+};
+
+// 由行情與法人資料算出排序用的衍生欄位。昨收 = 收盤 − 漲跌
+function addMetrics(x) {
+  const prev = x.close !== null && x.change !== null ? x.close - x.change : null;
+  x.pct   = prev > 0 ? x.change / prev * 100 : null;
+  x.range = prev > 0 && x.high !== null && x.low !== null ? (x.high - x.low) / prev * 100 : null;
+  // 有法人檔、但檔內沒有這檔股票：當天沒有法人進出，視為 0
+  const n = x.net === undefined ? null : (x.net ?? 0);
+  x.netAmt   = n !== null && x.close !== null ? n * x.close : null;
+  x.netRatio = n !== null && x.shares > 0 ? n / x.shares * 100 : null;
+  return x;
+}
+
+// 四位數普通股、有成交，依 sort 由大到小（同值依成交金額，再依代號）。
+// minAmount：成交金額以外的排序，先排除成交金額低於此值（元）的股票。
 // instOnly：有法人檔的市場只留三大法人買超 > 0；沒放法人檔的市場不篩選
-function rank(parsedList, { excludeDR = false, instOnly = false } = {}) {
+function rank(parsedList, { excludeDR = false, instOnly = false, sort = 'amount', minAmount = 0 } = {}) {
   const inst = {};
   for (const p of parsedList) if (p.kind === 'inst') inst[p.market] = new Map(p.recs.map(r => [r.code, r.value]));
 
@@ -322,24 +382,35 @@ function rank(parsedList, { excludeDR = false, instOnly = false } = {}) {
     if (p.kind !== 'quote') continue;
     const m = inst[p.market];
     for (const r of p.recs)
-      merged.push({ market: p.market, code: r.code, name: r.name, amount: r.value,
-                    net: m ? (m.has(r.code) ? m.get(r.code) : null) : undefined });   // undefined = 該市場沒放法人檔
+      merged.push(addMetrics({ market: p.market, code: r.code, name: r.name, amount: r.value,
+        shares: r.shares, close: r.close, high: r.high, low: r.low, change: r.change,
+        net: m ? (m.has(r.code) ? m.get(r.code) : null) : undefined }));   // undefined = 該市場沒放法人檔
   }
   let stocks = merged.filter(x => /^[1-9]\d{3}$/.test(x.code));
   if (excludeDR) stocks = stocks.filter(x => !x.name.endsWith('-DR'));
   const excluded = merged.length - stocks.length;
   stocks = stocks.filter(x => x.amount > 0);
   const traded = stocks.length;
+
+  let n = stocks.length;
+  if (sort !== 'amount' && minAmount > 0) stocks = stocks.filter(x => x.amount >= minAmount);
+  const belowMin = n - stocks.length;
+  n = stocks.length;
   if (instOnly) stocks = stocks.filter(x => x.net === undefined || x.net > 0);
-  const instDropped = traded - stocks.length;
-  stocks.sort((a, b) => (b.amount - a.amount) || (a.code < b.code ? -1 : a.code > b.code ? 1 : 0));
+  const instDropped = n - stocks.length;
+  n = stocks.length;
+  const key = SORTS[sort].key;
+  stocks = stocks.filter(x => key(x) !== null);
+  const unrankable = n - stocks.length;
+
+  stocks.sort((a, b) => (key(b) - key(a)) || (b.amount - a.amount) || (a.code < b.code ? -1 : a.code > b.code ? 1 : 0));
   const picked = stocks.slice(0, TOTAL);
   const batches = [];
   for (let i = 0; i < picked.length; i += BATCH) batches.push(picked.slice(i, i + BATCH));
-  return { merged, excluded, traded, instDropped, eligible: stocks.length, picked, batches };
+  return { merged, excluded, traded, belowMin, instDropped, unrankable, eligible: stocks.length, picked, batches };
 }
 
-if (typeof module !== 'undefined') module.exports = { decodeFile, parseRows, rank };
+if (typeof module !== 'undefined') module.exports = { decodeFile, parseRows, rank, SORTS };
 
 
 const SLOTS = ['twse-quote', 'twse-inst', 'tpex-quote', 'tpex-inst'];
@@ -349,6 +420,13 @@ const slotInfo = s => { const [m, k] = s.split('-'); return { market: m.toUpperC
 const state = Object.fromEntries(SLOTS.map(s => [s, null]));   // {fileName, rows}
 const fmt = n => n.toLocaleString('en-US');
 const fmtAmt = v => v >= 1e8 ? `${(v / 1e8).toFixed(v >= 1e10 ? 0 : 1)} 億` : `${fmt(Math.round(v / 1e4))} 萬`;
+const sgn = v => v > 0 ? '+' : v < 0 ? '−' : '';
+const fmtPct = v => v === null ? '–' : `${sgn(v)}${Math.abs(v).toFixed(2)}%`;
+const fmtNetAmt = v => v === null ? '–' : v === 0 ? '0' : sgn(v) + fmtAmt(Math.abs(v));
+// 批次標題顯示排序值的格式
+const SORT_FMT = { amount: x => fmtAmt(x.amount), up: x => fmtPct(x.pct), down: x => fmtPct(x.pct),
+                   range: x => fmtPct(x.range).replace('+', ''), netAmt: x => fmtNetAmt(x.netAmt), netRatio: x => fmtPct(x.netRatio) };
+const tone = v => v === null || v === undefined ? 'na' : v > 0 ? 'pos' : v < 0 ? 'neg' : '';
 const esc = s => s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
 async function loadFile(slot, file) {
@@ -414,6 +492,19 @@ function render() {
   document.getElementById('instwrap').classList.toggle('off', !insts.length);
   const instOnly = instBox.checked && insts.length > 0;
 
+  // 法人排序只在有法人檔時能選；最低成交金額只對成交金額以外的排序有效
+  const sortSel = document.getElementById('sort');
+  for (const o of sortSel.options) if ('inst' in o.dataset) {
+    o.disabled = !insts.length;
+    o.textContent = SORTS[o.value].label + (insts.length ? '' : '（需三大法人檔）');
+  }
+  if (sortSel.selectedOptions[0].disabled) sortSel.value = 'amount';
+  const sort = sortSel.value;
+  const minInput = document.getElementById('minamt');
+  minInput.disabled = sort === 'amount';
+  document.getElementById('minwrap').classList.toggle('off', sort === 'amount');
+  const minYi = Math.max(0, parseFloat(minInput.value) || 0);
+
   const notes = [];
   const dates = [...new Set(ok.map(p => p.date))];
   if (dates.length > 1) notes.push(`檔案日期不一致（${dates.join('、')}），確認沒有拿錯天的檔。`);
@@ -423,6 +514,9 @@ function render() {
   if (instOnly)
     for (const q of quotes)
       if (!hasInst(q.market)) notes.push(`${MARKET_NAME[q.market]}沒有放三大法人檔，${MARKET_NAME[q.market]}股票不做法人篩選。`);
+  if (SORTS[sort].inst)
+    for (const q of quotes)
+      if (!hasInst(q.market)) notes.push(`${MARKET_NAME[q.market]}沒有放三大法人檔，無法依${SORTS[sort].label}排序，${MARKET_NAME[q.market]}股票不會列入名單。`);
 
   const out = document.getElementById('out'), summary = document.getElementById('summary');
   if (!quotes.length) {
@@ -432,30 +526,40 @@ function render() {
     return;
   }
 
-  const r = rank(ok, { excludeDR: document.getElementById('exdr').checked, instOnly });
+  const r = rank(ok, { excludeDR: document.getElementById('exdr').checked, instOnly, sort, minAmount: minYi * 1e8 });
   if (r.picked.length < TOTAL) notes.push(`符合條件的只有 ${r.picked.length} 檔，不足 ${TOTAL}，只分出 ${r.batches.length} 批。`);
   document.getElementById('notes').innerHTML = notes.map(n => `<div class="note">${esc(n)}</div>`).join('');
 
   const nT = r.merged.filter(x => x.market === 'TWSE').length, nP = r.merged.length - nT;
   summary.innerHTML = `資料 <b>${dates.join('、')}</b>　原始 上市 ${fmt(nT)}、上櫃 ${fmt(nP)} 筆　排除 ETF、權證等非普通股 ${fmt(r.excluded)} 筆　有成交 <b>${fmt(r.traded)}</b> 檔`
+    + (r.belowMin ? `　成交金額未達 ${minYi} 億排除 ${fmt(r.belowMin)} 檔` : '')
     + (instOnly ? `　法人非買超排除 ${fmt(r.instDropped)} 檔` : '')
-    + `，取前 <b>${r.picked.length}</b>`;
+    + (r.unrankable ? `　無法計算${SORTS[sort].label}排除 ${fmt(r.unrankable)} 檔` : '')
+    + `，依 <b>${SORTS[sort].label}</b> 取前 <b>${r.picked.length}</b>`;
 
-  const showNet = insts.length > 0;
-  const netCell = x => x.net === undefined || x.net === null
-    ? '<td class="n na">–</td>'
-    : `<td class="n ${x.net > 0 ? 'pos' : 'neg'}">${fmt(x.net)}</td>`;
+  // 明細表欄位：成交金額、漲跌幅固定顯示，其餘依排序項目與是否有法人檔加上
+  const cols = [
+    { th: '成交金額', td: x => `<td class="n">${fmtAmt(x.amount)}</td>` },
+    { th: '漲跌幅',   td: x => `<td class="n ${tone(x.pct)}">${fmtPct(x.pct)}</td>` },
+  ];
+  if (sort === 'range') cols.push({ th: '振幅', td: x => `<td class="n">${SORT_FMT.range(x)}</td>` });
+  if (insts.length) cols.push({ th: '法人買賣超(股)', td: x => x.net === undefined || x.net === null
+    ? '<td class="n na">–</td>' : `<td class="n ${tone(x.net)}">${fmt(x.net)}</td>` });
+  if (sort === 'netAmt')   cols.push({ th: '法人買超金額', td: x => `<td class="n ${tone(x.netAmt)}">${fmtNetAmt(x.netAmt)}</td>` });
+  if (sort === 'netRatio') cols.push({ th: '占成交量',     td: x => `<td class="n ${tone(x.netRatio)}">${fmtPct(x.netRatio)}</td>` });
+  const head = cols.map(c => `<th class="n">${c.th}</th>`).join('');
+  const metric = SORT_FMT[sort];
 
   out.innerHTML = `<ol class="batches">${r.batches.map((seg, bi) => {
     const s = bi * BATCH + 1, e = bi * BATCH + seg.length;
     const t = seg.filter(x => x.market === 'TWSE').length, pp = seg.length - t;
-    const rows = seg.map((x, i) => `<tr><td>${s + i}</td><td class="m-${x.market}">${x.market}</td><td>${x.code}</td><td>${esc(x.name)}</td><td class="n">${fmtAmt(x.amount)}</td>${showNet ? netCell(x) : ''}</tr>`).join('');
+    const rows = seg.map((x, i) => `<tr><td>${s + i}</td><td class="m-${x.market}">${x.market}</td><td>${x.code}</td><td>${esc(x.name)}</td>${cols.map(c => c.td(x)).join('')}</tr>`).join('');
     return `<li class="batch" data-i="${bi}">
       <div class="row">
         <div class="num">${bi + 1}</div>
         <button type="button" class="info" aria-expanded="false">
           <div class="line1"><span class="range">第 ${s}–${e} 名</span>
-            <span class="vol">${fmtAmt(seg[0].amount)} ~ ${fmtAmt(seg[seg.length - 1].amount)} <small>成交金額</small></span></div>
+            <span class="vol">${metric(seg[0])} ~ ${metric(seg[seg.length - 1])} <small>${SORTS[sort].label}</small></span></div>
           <div class="mix" aria-hidden="true"><span class="t" style="width:${t / seg.length * 100}%"></span><span class="p" style="width:${pp / seg.length * 100}%"></span></div>
           <div class="mixlab"><span class="t">上市 ${t}</span>　<span class="p">上櫃 ${pp}</span></div>
         </button>
@@ -463,7 +567,7 @@ function render() {
       </div>
       <div class="detail">
         <div class="fallback"><p>瀏覽器擋住了自動複製，請全選下面的內容後複製。</p><textarea readonly></textarea></div>
-        <div class="tbl"><table><thead><tr><th>排名</th><th>市場</th><th>代號</th><th>名稱</th><th class="n">成交金額</th>${showNet ? '<th class="n">法人買賣超(股)</th>' : ''}</tr></thead><tbody>${rows}</tbody></table></div>
+        <div class="tbl"><table><thead><tr><th>排名</th><th>市場</th><th>代號</th><th>名稱</th>${head}</tr></thead><tbody>${rows}</tbody></table></div>
       </div>
     </li>`;
   }).join('')}</ol>`;
@@ -520,6 +624,8 @@ window.addEventListener('drop', e => e.preventDefault());
 
 document.getElementById('exdr').addEventListener('change', render);
 document.getElementById('instonly').addEventListener('change', render);
+document.getElementById('sort').addEventListener('change', render);
+document.getElementById('minamt').addEventListener('input', render);
 render();
 </script>
 </body>
