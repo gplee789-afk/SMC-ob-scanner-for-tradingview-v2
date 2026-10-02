@@ -61,6 +61,8 @@ h1 { margin: 0; font-size: 30px; font-weight: 900; letter-spacing: .02em; line-h
   box-shadow: 0 8px 24px rgba(0, 0, 0, .18);
 }
 .indtools { display: flex; justify-content: space-between; align-items: center; gap: 12px; font-size: 13px; color: var(--muted); margin-bottom: 8px; }
+.indmode { display: inline-flex; flex-wrap: wrap; gap: 4px 12px; align-items: center; }
+.indmode .check { color: var(--ink); font-size: 13px; }
 .indtools button { font: inherit; font-size: 13px; color: var(--ink); background: transparent; border: 1px solid var(--line); border-radius: 6px; padding: 2px 10px; cursor: pointer; }
 .indlist { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 4px 12px; max-height: 50vh; overflow-y: auto; }
 .indlist .check { color: var(--ink); }
@@ -205,7 +207,14 @@ td.m-TWSE { color: var(--twse); } td.m-TPEX { color: var(--tpex); }
       <details class="indpick" id="indwrap" hidden>
         <summary id="indsum">產業：全部</summary>
         <div class="indpanel">
-          <div class="indtools"><span>勾選要保留的產業，不勾為全部</span><button type="button" id="indclear">清除</button></div>
+          <div class="indtools">
+            <span class="indmode" role="radiogroup" aria-label="勾選的產業要保留還是排除">
+              勾選的產業：
+              <label class="check"><input type="radio" name="indmode" value="include" checked>只保留</label>
+              <label class="check"><input type="radio" name="indmode" value="exclude">排除</label>
+            </span>
+            <button type="button" id="indclear">清除</button>
+          </div>
           <div class="indlist" id="indlist"></div>
         </div>
       </details>
@@ -421,9 +430,10 @@ function addMetrics(x) {
 // 四位數普通股、有成交，依 sort 由大到小（同值依成交金額，再依代號）。
 // minAmount：成交金額以外的排序，先排除成交金額低於此值（元）的股票。
 // instOnly：有法人檔的市場只留三大法人買超 > 0；沒放法人檔的市場不篩選。
-// industries：產業名稱的 Set，空的或 null 表示不篩選；industryOf(code) 回傳該股產業
+// industries：產業名稱的 Set，空的或 null 表示不篩選；industryMode 為 include（只保留）或 exclude（排除）；
+// industryOf(code) 回傳該股產業
 function rank(parsedList, { excludeDR = false, instOnly = false, sort = 'amount', minAmount = 0,
-                            industries = null, industryOf = () => '未分類' } = {}) {
+                            industries = null, industryMode = 'include', industryOf = () => '未分類' } = {}) {
   const inst = {};
   for (const p of parsedList) if (p.kind === 'inst') inst[p.market] = new Map(p.recs.map(r => [r.code, r.value]));
 
@@ -443,7 +453,10 @@ function rank(parsedList, { excludeDR = false, instOnly = false, sort = 'amount'
   const traded = stocks.length;
 
   let n = stocks.length;
-  if (industries && industries.size) stocks = stocks.filter(x => industries.has(industryOf(x.code)));
+  if (industries && industries.size) {
+    const keep = industryMode !== 'exclude';
+    stocks = stocks.filter(x => industries.has(industryOf(x.code)) === keep);
+  }
   const indDropped = n - stocks.length;
   n = stocks.length;
   if (sort !== 'amount' && minAmount > 0) stocks = stocks.filter(x => x.amount >= minAmount);
@@ -469,7 +482,7 @@ if (typeof module !== 'undefined') module.exports = { decodeFile, parseRows, ran
 const SLOTS = ['twse-quote', 'twse-inst', 'tpex-quote', 'tpex-inst'];
 let source = 'manual';                                       // auto：讀 data/ 的自動資料；manual：手動放檔
 const auto = { cache: {}, current: null, status: '載入中…' };
-const industry = { map: null, picked: new Set() };           // map：代號 → 產業（data/industry.json）
+const industry = { map: null, picked: new Set(), mode: 'include' };   // map：代號 → 產業（data/industry.json）
 const industryOf = code => (industry.map && industry.map[code]) || '未分類';
 const MARKET_NAME = { TWSE: '上市', TPEX: '上櫃' };
 const KIND_NAME   = { quote: '每日行情', inst: '三大法人' };
@@ -590,7 +603,7 @@ function render() {
   }
 
   const r = rank(ok, { excludeDR: document.getElementById('exdr').checked, instOnly, sort, minAmount: minYi * 1e8,
-                       industries: industry.picked, industryOf });
+                       industries: industry.picked, industryMode: industry.mode, industryOf });
   if (r.picked.length < TOTAL) notes.push(`符合條件的只有 ${r.picked.length} 檔，不足 ${TOTAL}，只分出 ${r.batches.length} 批。`);
   document.getElementById('notes').innerHTML = notes.map(n => `<div class="note">${esc(n)}</div>`).join('');
 
@@ -734,8 +747,9 @@ async function initAuto() {
 // 產業分類：來自證交所 ISIN 代碼表，每週更新。讀不到（例如直接打開本機檔案）就不顯示產業篩選
 function updateIndSummary() {
   const p = [...industry.picked];
+  const verb = industry.mode === 'exclude' ? '排除 ' : '';
   document.getElementById('indsum').textContent =
-    !p.length ? '產業：全部' : p.length <= 2 ? `產業：${p.join('、')}` : `產業：${p[0]} 等 ${p.length} 類`;
+    !p.length ? '產業：全部' : p.length <= 2 ? `產業：${verb}${p.join('、')}` : `產業：${verb}${p[0]} 等 ${p.length} 類`;
 }
 
 async function initIndustry() {
@@ -753,6 +767,10 @@ async function initIndustry() {
     if (e.target.checked) industry.picked.add(e.target.value); else industry.picked.delete(e.target.value);
     updateIndSummary(); render();
   });
+  document.querySelectorAll('input[name=indmode]').forEach(i => i.addEventListener('change', () => {
+    industry.mode = document.querySelector('input[name=indmode]:checked').value;
+    updateIndSummary(); render();
+  }));
   document.getElementById('indclear').addEventListener('click', () => {
     industry.picked.clear();
     list.querySelectorAll('input').forEach(i => { i.checked = false; });
