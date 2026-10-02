@@ -248,6 +248,79 @@ def fetch_day(d):
     return True
 
 
+# ── 歷史指標：由前幾個交易日的資料算出，存成 data/hist/YYYY-MM-DD.json ──
+# 只用 data/ 裡已有的日期；前面的資料不夠時該欄為 null。價格未還原除權息，跨除權息日的漲幅會偏低
+
+HIST = DATA / 'hist'
+HIST_FIELDS = ['code', 'volRatio', 'ret5', 'ret20', 'streak', 'inst5']
+_day_cache = {}
+
+
+def trading_dates():
+    return sorted(p.stem for p in DATA.glob('*.json') if re.fullmatch(r'\d{4}-\d{2}-\d{2}', p.stem))
+
+
+def load_day(ds):
+    """回傳 {code: (amount, close, net)}；net 為 None 表示該市場當天沒有法人資料"""
+    if ds not in _day_cache:
+        j = json.loads((DATA / f'{ds}.json').read_text(encoding='utf-8'))
+        out = {}
+        for m in ('TWSE', 'TPEX'):
+            inst = j[m].get('inst')
+            nets = dict(inst) if inst else None
+            for code, _name, amount, _sh, close, *_ in j[m]['quote']:
+                out[code] = (amount, close, None if nets is None else nets.get(code, 0))
+        _day_cache[ds] = out
+    return _day_cache[ds]
+
+
+def build_hist(dates, i):
+    today = load_day(dates[i])
+    prev = [load_day(ds) for ds in dates[max(0, i - 20):i]]       # 前 20 個交易日，舊 → 新
+    rows = []
+    for code, (amount, close, net) in today.items():
+        # 量比：今天成交金額 ÷ 前 20 日平均（至少要有 10 天）
+        past = [d[code][0] for d in prev if code in d and d[code][0]]
+        vol_ratio = round(amount / (sum(past) / len(past)), 2) if len(past) >= 10 and amount else None
+
+        def ret(n):
+            if i < n or close is None:
+                return None
+            old = load_day(dates[i - n]).get(code)
+            return round((close / old[1] - 1) * 100, 2) if old and old[1] else None
+
+        # 法人連續買超（正）或賣超（負）天數，往前數到方向改變或沒有資料為止（最多看 60 天）
+        streak = 0
+        if net:
+            sign = 1 if net > 0 else -1
+            for k in range(i, max(-1, i - 60), -1):
+                n = load_day(dates[k]).get(code, (None, None, None))[2]
+                if n is None or n * sign <= 0:
+                    break
+                streak += sign
+
+        # 法人 5 日買超金額：最近 5 天（含今天）買賣超股數 × 當天收盤，至少要有 3 天
+        days5 = [today] + prev[::-1][:4]
+        vals = [d[code][2] * d[code][1] for d in days5 if code in d and d[code][2] is not None and d[code][1]]
+        inst5 = round(sum(vals)) if len(vals) >= 3 else None
+
+        rows.append([code, vol_ratio, ret(5), ret(20), streak if net is not None else None, inst5])
+    HIST.mkdir(parents=True, exist_ok=True)
+    (HIST / f'{dates[i]}.json').write_text(json.dumps(
+        {'date': dates[i], 'fields': HIST_FIELDS, 'rows': rows}, ensure_ascii=False, separators=(',', ':')), encoding='utf-8')
+
+
+def ensure_hist(rebuild=False, recent=25):
+    """補上缺少的歷史指標檔。新抓到的日期會影響之後 20 天的指標，所以最近 recent 天一律重算"""
+    dates = trading_dates()
+    built = 0
+    for i, ds in enumerate(dates):
+        if rebuild or i >= len(dates) - recent or not (HIST / f'{ds}.json').exists():
+            build_hist(dates, i)
+            built += 1
+    print(f'歷史指標：更新 {built} 天')
+
+
 def write_index():
     dates = sorted((p.stem for p in DATA.glob('*.json') if re.fullmatch(r'\d{4}-\d{2}-\d{2}', p.stem)), reverse=True)
     (DATA / 'index.json').write_text(json.dumps({'dates': dates}, separators=(',', ':')), encoding='utf-8')
@@ -288,10 +361,15 @@ def main():
     ap.add_argument('--max-minutes', type=float, default=40)
     ap.add_argument('--delay', type=float, default=None, help='同一主機請求間隔秒數（補抓預設 4）')
     ap.add_argument('--industry', action='store_true', help='只更新產業分類')
+    ap.add_argument('--hist', action='store_true', help='只重算全部的歷史指標')
     a = ap.parse_args()
 
     if a.industry:
         fetch_industry()
+        return 0
+
+    if a.hist:
+        ensure_hist(rebuild=True)
         return 0
 
     if a.since:
@@ -300,6 +378,7 @@ def main():
         rc = backfill(a.since, a.until or today - datetime.timedelta(days=1), a.max_minutes)
         if DATA.exists():
             write_index()
+            ensure_hist(rebuild=True)            # 補進舊日期會影響之後每一天的指標
         return rc
 
     if a.delay:
@@ -309,6 +388,7 @@ def main():
         fetch_day(d)
     if DATA.exists():
         write_index()
+        ensure_hist(rebuild=bool(a.dates))      # 指定日期重抓時可能是舊日期，全部重算
     if not a.dates and industry_stale():
         try:
             fetch_industry()

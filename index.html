@@ -200,6 +200,13 @@ td.m-TWSE { color: var(--twse); } td.m-TPEX { color: var(--tpex); }
           <option value="range">振幅</option>
           <option value="netAmt" data-inst>法人買超金額</option>
           <option value="netRatio" data-inst>法人買超占成交量</option>
+          <optgroup label="歷史比較（自動資料）">
+            <option value="volRatio" data-hist>量比（20 日）</option>
+            <option value="ret5" data-hist>5 日漲幅</option>
+            <option value="ret20" data-hist>20 日漲幅</option>
+            <option value="streak" data-hist>法人連續買超天數</option>
+            <option value="inst5" data-hist>法人 5 日買超金額</option>
+          </optgroup>
         </select>
       </label>
       <label class="field" id="minwrap" title="依成交金額以外的項目排序時，先排除成交太少的股票">最低成交金額
@@ -415,7 +422,14 @@ const SORTS = {
   range:    { label: '振幅',             key: x => x.range },
   netAmt:   { label: '法人買超金額',     key: x => x.netAmt,   inst: true },
   netRatio: { label: '法人買超占成交量', key: x => x.netRatio, inst: true },
+  // 以下由 data/hist/ 的歷史指標提供，只有自動資料有
+  volRatio: { label: '量比（20 日）',    key: x => x.volRatio, hist: true },
+  ret5:     { label: '5 日漲幅',         key: x => x.ret5,     hist: true },
+  ret20:    { label: '20 日漲幅',        key: x => x.ret20,    hist: true },
+  streak:   { label: '法人連續買超天數', key: x => x.streak,   hist: true },
+  inst5:    { label: '法人 5 日買超金額', key: x => x.inst5,   hist: true },
 };
+const HIST_KEYS = ['volRatio', 'ret5', 'ret20', 'streak', 'inst5'];
 
 // 由行情與法人資料算出排序用的衍生欄位。昨收 = 收盤 − 漲跌
 function addMetrics(x) {
@@ -435,7 +449,7 @@ function addMetrics(x) {
 // industries：產業名稱的 Set，空的或 null 表示不篩選；industryMode 為 include（只保留）或 exclude（排除）；
 // industryOf(code) 回傳該股產業
 function rank(parsedList, { excludeDR = false, instOnly = false, sort = 'amount', minAmount = 0,
-                            industries = null, industryMode = 'include', industryOf = () => '未分類' } = {}) {
+                            industries = null, industryMode = 'include', industryOf = () => '未分類', hist = null } = {}) {
   const inst = {};
   for (const p of parsedList) if (p.kind === 'inst') inst[p.market] = new Map(p.recs.map(r => [r.code, r.value]));
 
@@ -447,6 +461,11 @@ function rank(parsedList, { excludeDR = false, instOnly = false, sort = 'amount'
       merged.push(addMetrics({ market: p.market, code: r.code, name: r.name, amount: r.value,
         shares: r.shares, close: r.close, high: r.high, low: r.low, change: r.change,
         net: m ? (m.has(r.code) ? m.get(r.code) : null) : undefined }));   // undefined = 該市場沒放法人檔
+  }
+  // 歷史指標（hist：代號 → {volRatio, ret5, ...}）；沒有就是 null，依這些項目排序時會被排除
+  for (const x of merged) {
+    const h = hist && hist.get(x.code);
+    for (const k of HIST_KEYS) x[k] = h ? h[k] : null;
   }
   let stocks = merged.filter(x => /^[1-9]\d{3}$/.test(x.code));
   if (excludeDR) stocks = stocks.filter(x => !x.name.endsWith('-DR'));
@@ -483,7 +502,7 @@ if (typeof module !== 'undefined') module.exports = { decodeFile, parseRows, ran
 
 const SLOTS = ['twse-quote', 'twse-inst', 'tpex-quote', 'tpex-inst'];
 let source = 'manual';                                       // auto：讀 data/ 的自動資料；manual：手動放檔
-const auto = { cache: {}, current: null, status: '載入中…' };
+const auto = { cache: {}, current: null, status: '載入中…', histCache: {}, hist: null };
 const industry = { map: null, picked: new Set(), mode: 'include' };   // map：代號 → 產業（data/industry.json）
 const industryOf = code => (industry.map && industry.map[code]) || '未分類';
 const MARKET_NAME = { TWSE: '上市', TPEX: '上櫃' };
@@ -497,7 +516,11 @@ const fmtPct = v => v === null ? '–' : `${sgn(v)}${Math.abs(v).toFixed(2)}%`;
 const fmtNetAmt = v => v === null ? '–' : v === 0 ? '0' : sgn(v) + fmtAmt(Math.abs(v));
 // 批次標題顯示排序值的格式
 const SORT_FMT = { amount: x => fmtAmt(x.amount), up: x => fmtPct(x.pct), down: x => fmtPct(x.pct),
-                   range: x => fmtPct(x.range).replace('+', ''), netAmt: x => fmtNetAmt(x.netAmt), netRatio: x => fmtPct(x.netRatio) };
+                   range: x => fmtPct(x.range).replace('+', ''), netAmt: x => fmtNetAmt(x.netAmt), netRatio: x => fmtPct(x.netRatio),
+                   volRatio: x => x.volRatio === null ? '–' : `${x.volRatio.toFixed(2)} 倍`,
+                   ret5: x => fmtPct(x.ret5), ret20: x => fmtPct(x.ret20),
+                   streak: x => x.streak === null ? '–' : x.streak === 0 ? '0 天' : `${sgn(x.streak)}${Math.abs(x.streak)} 天`,
+                   inst5: x => fmtNetAmt(x.inst5) };
 const tone = v => v === null || v === undefined ? 'na' : v > 0 ? 'pos' : v < 0 ? 'neg' : '';
 const esc = s => s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
@@ -576,6 +599,11 @@ function render() {
     o.disabled = !insts.length;
     o.textContent = SORTS[o.value].label + (insts.length ? '' : '（需三大法人檔）');
   }
+  const histOk = useAuto && !!auto.hist;
+  for (const o of sortSel.options) if ('hist' in o.dataset) {
+    o.disabled = !histOk;
+    o.textContent = SORTS[o.value].label + (histOk ? '' : useAuto ? '（這天沒有歷史資料）' : '（需自動資料）');
+  }
   if (sortSel.selectedOptions[0].disabled) sortSel.value = 'amount';
   const sort = sortSel.value;
   const minInput = document.getElementById('minamt');
@@ -605,7 +633,10 @@ function render() {
   }
 
   const r = rank(ok, { excludeDR: document.getElementById('exdr').checked, instOnly, sort, minAmount: minYi * 1e8,
-                       industries: industry.picked, industryMode: industry.mode, industryOf });
+                       industries: industry.picked, industryMode: industry.mode, industryOf,
+                       hist: histOk ? auto.hist : null });
+  if (SORTS[sort].hist && r.unrankable > r.eligible)
+    notes.push(`多數股票算不出${SORTS[sort].label}：這天之前累積的交易日還不夠（量比要 10 天、5 日 / 20 日漲幅要 5 / 20 天）。`);
   if (r.picked.length < TOTAL) notes.push(`符合條件的只有 ${r.picked.length} 檔，不足 ${TOTAL}，只分出 ${r.batches.length} 批。`);
   document.getElementById('notes').innerHTML = notes.map(n => `<div class="note">${esc(n)}</div>`).join('');
 
@@ -628,6 +659,10 @@ function render() {
     ? '<td class="n na">–</td>' : `<td class="n ${tone(x.net)}">${fmt(x.net)}</td>` });
   if (sort === 'netAmt')   cols.push({ th: '法人買超金額', td: x => `<td class="n ${tone(x.netAmt)}">${fmtNetAmt(x.netAmt)}</td>` });
   if (sort === 'netRatio') cols.push({ th: '占成交量',     td: x => `<td class="n ${tone(x.netRatio)}">${fmtPct(x.netRatio)}</td>` });
+  if (SORTS[sort].hist) {
+    const toneOf = sort === 'volRatio' ? () => '' : x => tone(x[sort]);
+    cols.push({ th: SORTS[sort].label, td: x => `<td class="n ${toneOf(x)}">${SORT_FMT[sort](x)}</td>` });
+  }
   const head = cols.map(c => `<th${c.left ? '' : ' class="n"'}>${c.th}</th>`).join('');
   const metric = SORT_FMT[sort];
 
@@ -719,6 +754,15 @@ async function loadAutoDate(d) {
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       auto.cache[d] = fromAuto(await r.json());
     }
+    // 歷史指標檔（data/hist/）；沒有也不影響其他排序
+    if (!(d in auto.histCache)) {
+      try {
+        const h = await fetch(`data/hist/${d}.json`, { cache: 'no-cache' });
+        const j = h.ok ? await h.json() : null;
+        auto.histCache[d] = j && new Map(j.rows.map(row => [row[0], Object.fromEntries(j.fields.slice(1).map((f, k) => [f, row[k + 1]]))]));
+      } catch (e) { auto.histCache[d] = null; }
+    }
+    auto.hist = auto.histCache[d];
     auto.current = auto.cache[d];
     const miss = ['TWSE', 'TPEX'].filter(m => !auto.current.some(p => p.market === m && p.kind === 'inst'));
     if (miss.length) setStat(`${miss.map(m => MARKET_NAME[m]).join('、')}三大法人這天沒有抓到`, true);
