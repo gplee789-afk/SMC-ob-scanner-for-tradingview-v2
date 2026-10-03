@@ -70,6 +70,9 @@ h1 { margin: 0; font-size: 30px; font-weight: 900; letter-spacing: .02em; line-h
 .indlist .check { color: var(--ink); }
 .indlist small { color: var(--muted); }
 td.ind { color: var(--muted); }
+a.stk { color: inherit; text-decoration: none; border-bottom: 1px dotted var(--muted); }
+a.stk:hover { color: var(--twse); border-bottom-color: var(--twse); }
+a.stk:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; border-radius: 2px; }
 @media (max-width: 640px) { .indpanel { left: 0; right: auto; } }
 .field { display: inline-flex; gap: 6px; align-items: center; font-size: 14px; color: var(--muted); }
 .field select, .field input {
@@ -521,7 +524,12 @@ const SORT_FMT = { amount: x => fmtAmt(x.amount), up: x => fmtPct(x.pct), down: 
                    ret5: x => fmtPct(x.ret5), ret20: x => fmtPct(x.ret20),
                    streak: x => x.streak === null ? '–' : x.streak === 0 ? '0 天' : `${sgn(x.streak)}${Math.abs(x.streak)} 天`,
                    inst5: x => fmtNetAmt(x.inst5) };
-const tone = v => v === null || v === undefined ? 'na' : v > 0 ? 'pos' : v < 0 ? 'neg' : '';
+// 證交所「基本市況報導」個股頁，上市 tse_、上櫃 otc_
+const stockUrl = x => {
+  const ex = x.market === 'TPEX' ? 'otc' : 'tse';
+  return `https://mis.twse.com.tw/stock/detail-item?id=${ex}_${x.code}.tw&ex=${ex}&lang=zhHant`;
+};
+const tone = v =>v === null || v === undefined ? 'na' : v > 0 ? 'pos' : v < 0 ? 'neg' : '';
 const esc = s => s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
 async function loadFile(slot, file) {
@@ -669,7 +677,13 @@ function render() {
   out.innerHTML = `<ol class="batches">${r.batches.map((seg, bi) => {
     const s = bi * BATCH + 1, e = bi * BATCH + seg.length;
     const t = seg.filter(x => x.market === 'TWSE').length, pp = seg.length - t;
-    const rows = seg.map((x, i) => `<tr><td>${s + i}</td><td class="m-${x.market}">${x.market}</td><td>${x.code}</td><td>${esc(x.name)}</td>${cols.map(c => c.td(x)).join('')}</tr>`).join('');
+    const rows = seg.map((x, i) => {
+      const link = stockUrl(x);
+      return `<tr><td>${s + i}</td><td class="m-${x.market}">${x.market}</td>`
+        + `<td><a class="stk" href="${link}" target="_blank" rel="noopener" title="開啟證交所個股行情">${x.code}</a></td>`
+        + `<td><a class="stk" href="${link}" target="_blank" rel="noopener" title="開啟證交所個股行情">${esc(x.name)}</a></td>`
+        + `${cols.map(c => c.td(x)).join('')}</tr>`;
+    }).join('');
     return `<li class="batch" data-i="${bi}">
       <div class="row">
         <div class="num">${bi + 1}</div>
