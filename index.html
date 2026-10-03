@@ -87,6 +87,14 @@ a.stk:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; bord
   background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 14px 18px;
 }
 .auto .meta { font-size: 13px; color: var(--muted); }
+.datepick { flex-wrap: wrap; }
+.dnav {
+  font: inherit; font-size: 14px; color: var(--ink); background: var(--surface); cursor: pointer;
+  border: 1px solid var(--line); border-radius: 6px; padding: 4px 10px; line-height: 1.4;
+}
+.dnav:hover:not(:disabled) { border-color: var(--ink); }
+.dnav:disabled { opacity: .4; cursor: default; }
+.dnav:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
 .auto .meta.bad { color: var(--buy); }
 
 .slots { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px; }
@@ -258,7 +266,14 @@ td.m-TWSE { color: var(--twse); } td.m-TPEX { color: var(--tpex); }
         <option value="manual">手動放檔</option>
       </select>
     </label>
-    <label class="field" id="datewrap">日期 <select id="date"></select></label>
+    <span class="field datepick" id="datewrap">日期
+      <button type="button" class="dnav" id="dprev" aria-label="前一個交易日" title="前一個交易日">‹</button>
+      <select id="dy" aria-label="年"></select>
+      <select id="dm" aria-label="月"></select>
+      <select id="dd" aria-label="日"></select>
+      <button type="button" class="dnav" id="dnext" aria-label="下一個交易日" title="下一個交易日">›</button>
+      <button type="button" class="dnav" id="dlatest">最新</button>
+    </span>
     <span class="meta" id="autostat"></span>
   </section>
 
@@ -827,6 +842,46 @@ async function loadAutoDate(d) {
   render();
 }
 
+// 日期：年、月、日分開選，只列出有資料的交易日。datePick.dates 由新到舊
+const datePick = { dates: [], cur: null };
+const $ = id => document.getElementById(id);
+
+function fillDatePick(d) {
+  datePick.cur = d;
+  const all = datePick.dates, [y, m] = d.split('-');
+  const years = [...new Set(all.map(x => x.slice(0, 4)))];                                   // 新 → 舊
+  const months = [...new Set(all.filter(x => x.startsWith(y)).map(x => x.slice(5, 7)))].sort(); // 1 → 12 月
+  const days = all.filter(x => x.startsWith(`${y}-${m}`)).sort();
+  $('dy').innerHTML = years.map(v => `<option value="${v}">${v} 年</option>`).join('');
+  $('dm').innerHTML = months.map(v => `<option value="${v}">${+v} 月</option>`).join('');
+  $('dd').innerHTML = days.map(x => `<option value="${x}">${+x.slice(8)} 日（${WEEK[new Date(x + 'T00:00:00').getDay()]}）</option>`).join('');
+  $('dy').value = y; $('dm').value = m; $('dd').value = d;
+  const i = all.indexOf(d);
+  $('dprev').disabled = i >= all.length - 1;
+  $('dnext').disabled = i <= 0;
+  $('dlatest').disabled = i === 0;
+}
+
+function goDate(d) {
+  if (!d || d === datePick.cur) return;
+  fillDatePick(d);
+  loadAutoDate(d);
+}
+
+// 換年或換月時，盡量停在同一個月 / 同一天，沒有的話取該期間最後一個交易日
+$('dy').addEventListener('change', () => {
+  const y = $('dy').value, all = datePick.dates;
+  goDate(all.find(x => x.startsWith(`${y}-${$('dm').value}`)) || all.find(x => x.startsWith(y)));
+});
+$('dm').addEventListener('change', () => {
+  const ym = `${$('dy').value}-${$('dm').value}`, all = datePick.dates;
+  goDate(all.find(x => x === `${ym}-${datePick.cur.slice(8)}`) || all.find(x => x.startsWith(ym)));
+});
+$('dd').addEventListener('change', () => goDate($('dd').value));
+$('dprev').addEventListener('click', () => goDate(datePick.dates[datePick.dates.indexOf(datePick.cur) + 1]));
+$('dnext').addEventListener('click', () => goDate(datePick.dates[datePick.dates.indexOf(datePick.cur) - 1]));
+$('dlatest').addEventListener('click', () => goDate(datePick.dates[0]));
+
 async function initAuto() {
   let idx;
   try {
@@ -835,8 +890,8 @@ async function initAuto() {
     idx = await r.json();
   } catch (e) { return; }
   if (!idx.dates || !idx.dates.length) return;
-  document.getElementById('date').innerHTML = idx.dates
-    .map(d => `<option value="${d}">${d}（${WEEK[new Date(d + 'T00:00:00').getDay()]}）</option>`).join('');
+  datePick.dates = idx.dates;
+  fillDatePick(idx.dates[0]);
   document.getElementById('auto').hidden = false;
   document.querySelector('#nhwin option[value=gapAll]').textContent = `資料期間（自 ${idx.dates[idx.dates.length - 1]}）`;
   if (SLOTS.some(s => state[s])) { document.getElementById('src').value = 'manual'; return; }   // 已經手動放檔就不切換
@@ -889,10 +944,9 @@ document.getElementById('src').addEventListener('change', e => {
   source = e.target.value;
   document.getElementById('datewrap').hidden = source !== 'auto';
   document.getElementById('autostat').hidden = source !== 'auto';
-  if (source === 'auto' && !auto.current) loadAutoDate(document.getElementById('date').value);
+  if (source === 'auto' && !auto.current) loadAutoDate(datePick.cur);
   else render();
 });
-document.getElementById('date').addEventListener('change', e => loadAutoDate(e.target.value));
 
 // ── 放檔 ──
 document.querySelectorAll('.slot').forEach(el => {
