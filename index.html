@@ -73,6 +73,14 @@ td.ind { color: var(--muted); }
 a.stk { color: inherit; text-decoration: none; border-bottom: 1px dotted var(--muted); }
 a.stk:hover { color: var(--twse); border-bottom-color: var(--twse); }
 a.stk:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; border-radius: 2px; }
+.cpsym {
+  font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: copy;
+  border-bottom: 1px dashed var(--muted); font-variant-numeric: tabular-nums;
+}
+.cpsym:hover { color: var(--tpex); border-bottom-color: var(--tpex); }
+.cpsym:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; border-radius: 2px; }
+.cpsym.ok { color: var(--tpex); }
+.cpsym.ok::after { content: " ✓"; }
 @media (max-width: 640px) { .indpanel { left: 0; right: auto; } }
 .field { display: inline-flex; gap: 6px; align-items: center; font-size: 14px; color: var(--muted); }
 .field select, .field input {
@@ -756,7 +764,7 @@ function render() {
     const rows = seg.map((x, i) => {
       const link = stockUrl(x);
       return `<tr><td>${s + i}</td><td class="m-${x.market}">${x.market}</td>`
-        + `<td><a class="stk" href="${link}" target="_blank" rel="noopener" title="開啟 Yahoo 股市個股頁">${x.code}</a></td>`
+        + `<td><button type="button" class="cpsym" data-sym="${x.market}:${x.code}" title="複製 ${x.market}:${x.code}">${x.code}</button></td>`
         + `<td><a class="stk" href="${link}" target="_blank" rel="noopener" title="開啟 Yahoo 股市個股頁">${esc(x.name)}</a></td>`
         + `${cols.map(c => c.td(x)).join('')}</tr>`;
     }).join('');
@@ -801,6 +809,16 @@ function render() {
     });
   });
 }
+
+// 點代號複製 TradingView 格式（TWSE:2330），短暫顯示 ✓
+document.getElementById('out').addEventListener('click', async e => {
+  const b = e.target.closest('.cpsym');
+  if (!b) return;
+  if (await copyText(b.dataset.sym)) {
+    b.classList.add('ok');
+    setTimeout(() => b.classList.remove('ok'), 1200);
+  }
+});
 
 async function copyText(t) {
   try { await navigator.clipboard.writeText(t); return true; } catch (e) {}
