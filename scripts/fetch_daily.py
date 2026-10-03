@@ -306,8 +306,9 @@ def build_hist(dates, i, gaps):
 
         # 法人 5 日買超金額：最近 5 天（含今天）買賣超股數 × 當天收盤，至少要有 3 天
         days5 = [today] + prev[::-1][:4]
-        vals = [d[code][2] * d[code][1] for d in days5 if code in d and d[code][2] is not None and d[code][1]]
-        inst5 = round(sum(vals)) if len(vals) >= 3 else None
+        # 收盤先換成「分」的整數再相乘加總，避免浮點誤差讓不同機器算出差 1 元的結果
+        vals = [d[code][2] * round(d[code][1] * 100) for d in days5 if code in d and d[code][2] is not None and d[code][1]]
+        inst5 = round(sum(vals) / 100) if len(vals) >= 3 else None
 
         rows.append([code, vol_ratio, ret(5), ret(20), streak if net is not None else None, inst5]
                     + gaps.get(code, [None] * 5))
