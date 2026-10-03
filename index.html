@@ -216,6 +216,23 @@ td.m-TWSE { color: var(--twse); } td.m-TPEX { color: var(--tpex); }
         <input type="number" id="minamt" min="0" step="0.1" value="0.5" inputmode="decimal"> 億
       </label>
       <label class="check"><input type="checkbox" id="exdr">排除 DR</label>
+      <label class="field" id="nhwrap" title="用收盤價跟前 N 個交易日的最高收盤比較（需自動資料）">新高
+        <select id="nhmode">
+          <option value="" selected>不篩選</option>
+          <option value="new">創新高</option>
+          <option value="near">接近新高</option>
+        </select>
+      </label>
+      <label class="field" id="nhopts" hidden>
+        <select id="nhwin" aria-label="新高的比較期間">
+          <option value="gap20">20 日</option>
+          <option value="gap60">60 日</option>
+          <option value="gap240" selected>一年（240 日）</option>
+          <option value="gapAll">資料期間（歷史）</option>
+        </select>
+        <span id="nhlab">高出至少</span>
+        <input type="number" id="nhpct" min="0" step="0.5" value="0" inputmode="decimal"> %
+      </label>
       <details class="indpick" id="indwrap" hidden>
         <summary id="indsum">產業：全部</summary>
         <div class="indpanel">
@@ -432,7 +449,8 @@ const SORTS = {
   streak:   { label: '法人連續買超天數', key: x => x.streak,   hist: true },
   inst5:    { label: '法人 5 日買超金額', key: x => x.inst5,   hist: true },
 };
-const HIST_KEYS = ['volRatio', 'ret5', 'ret20', 'streak', 'inst5'];
+const HIST_KEYS = ['volRatio', 'ret5', 'ret20', 'streak', 'inst5', 'gap20', 'gap60', 'gap240', 'gapAll'];
+const NH_LABEL = { gap20: '20 日', gap60: '60 日', gap240: '一年', gapAll: '資料期間' };
 
 // 由行情與法人資料算出排序用的衍生欄位。昨收 = 收盤 − 漲跌
 function addMetrics(x) {
@@ -452,7 +470,10 @@ function addMetrics(x) {
 // industries：產業名稱的 Set，空的或 null 表示不篩選；industryMode 為 include（只保留）或 exclude（排除）；
 // industryOf(code) 回傳該股產業
 function rank(parsedList, { excludeDR = false, instOnly = false, sort = 'amount', minAmount = 0,
-                            industries = null, industryMode = 'include', industryOf = () => '未分類', hist = null } = {}) {
+                            industries = null, industryMode = 'include', industryOf = () => '未分類', hist = null,
+                            newHigh = null } = {}) {
+  // newHigh：{field: 'gap240' 等, mode: 'new' | 'near', pct}。
+  // new = 收盤高於前高至少 pct %；near = 收盤在前高下方 pct % 以內（尚未突破）
   const inst = {};
   for (const p of parsedList) if (p.kind === 'inst') inst[p.market] = new Map(p.recs.map(r => [r.code, r.value]));
 
@@ -483,6 +504,13 @@ function rank(parsedList, { excludeDR = false, instOnly = false, sort = 'amount'
   }
   const indDropped = n - stocks.length;
   n = stocks.length;
+  if (newHigh) {
+    const { field, mode, pct } = newHigh;
+    stocks = stocks.filter(x => x[field] !== null &&
+      (mode === 'new' ? x[field] > 0 && x[field] >= pct : x[field] <= 0 && x[field] >= -pct));
+  }
+  const nhDropped = n - stocks.length;
+  n = stocks.length;
   if (sort !== 'amount' && minAmount > 0) stocks = stocks.filter(x => x.amount >= minAmount);
   const belowMin = n - stocks.length;
   n = stocks.length;
@@ -497,7 +525,7 @@ function rank(parsedList, { excludeDR = false, instOnly = false, sort = 'amount'
   const picked = stocks.slice(0, TOTAL);
   const batches = [];
   for (let i = 0; i < picked.length; i += BATCH) batches.push(picked.slice(i, i + BATCH));
-  return { merged, excluded, traded, indDropped, belowMin, instDropped, unrankable, eligible: stocks.length, picked, batches };
+  return { merged, excluded, traded, indDropped, nhDropped, belowMin, instDropped, unrankable, eligible: stocks.length, picked, batches };
 }
 
 if (typeof module !== 'undefined') module.exports = { decodeFile, parseRows, rank, SORTS };
@@ -610,6 +638,16 @@ function render() {
     o.textContent = SORTS[o.value].label + (histOk ? '' : useAuto ? '（這天沒有歷史資料）' : '（需自動資料）');
   }
   if (sortSel.selectedOptions[0].disabled) sortSel.value = 'amount';
+
+  // 新高篩選：需要歷史指標
+  const nhSel = document.getElementById('nhmode');
+  nhSel.disabled = !histOk;
+  document.getElementById('nhwrap').classList.toggle('off', !histOk);
+  const nhMode = histOk ? nhSel.value : '';
+  document.getElementById('nhopts').hidden = !nhMode;
+  const nhField = document.getElementById('nhwin').value;
+  const nhPct = Math.max(0, parseFloat(document.getElementById('nhpct').value) || 0);
+  const newHigh = nhMode ? { field: nhField, mode: nhMode, pct: nhPct } : null;
   const sort = sortSel.value;
   const minInput = document.getElementById('minamt');
   minInput.disabled = sort === 'amount';
@@ -639,7 +677,9 @@ function render() {
 
   const r = rank(ok, { excludeDR: document.getElementById('exdr').checked, instOnly, sort, minAmount: minYi * 1e8,
                        industries: industry.picked, industryMode: industry.mode, industryOf,
-                       hist: histOk ? auto.hist : null });
+                       hist: histOk ? auto.hist : null, newHigh });
+  if (newHigh && r.nhDropped === r.traded - r.indDropped)
+    notes.push(`這天沒有股票符合新高條件，或之前累積的交易日還不夠算 ${NH_LABEL[nhField]}新高。`);
   if (SORTS[sort].hist && r.unrankable > r.eligible)
     notes.push(`多數股票算不出${SORTS[sort].label}：這天之前累積的交易日還不夠（量比要 10 天、5 日 / 20 日漲幅要 5 / 20 天）。`);
   if (r.picked.length < TOTAL) notes.push(`符合條件的只有 ${r.picked.length} 檔，不足 ${TOTAL}，只分出 ${r.batches.length} 批。`);
@@ -648,6 +688,7 @@ function render() {
   const nT = r.merged.filter(x => x.market === 'TWSE').length, nP = r.merged.length - nT;
   summary.innerHTML = `資料 <b>${dates.join('、')}</b>　原始 上市 ${fmt(nT)}、上櫃 ${fmt(nP)} 筆　${r.excluded ? `排除 ETF、權證等非普通股 ${fmt(r.excluded)} 筆　` : ''}有成交 <b>${fmt(r.traded)}</b> 檔`
     + (r.indDropped ? `　產業篩選排除 ${fmt(r.indDropped)} 檔` : '')
+    + (newHigh ? `　${NH_LABEL[nhField]}${nhMode === 'new' ? '創新高' : '接近新高'}篩選排除 ${fmt(r.nhDropped)} 檔` : '')
     + (r.belowMin ? `　成交金額未達 ${minYi} 億排除 ${fmt(r.belowMin)} 檔` : '')
     + (instOnly ? `　法人非買超排除 ${fmt(r.instDropped)} 檔` : '')
     + (r.unrankable ? `　無法計算${SORTS[sort].label}排除 ${fmt(r.unrankable)} 檔` : '')
@@ -664,6 +705,7 @@ function render() {
     ? '<td class="n na">–</td>' : `<td class="n ${tone(x.net)}">${fmt(x.net)}</td>` });
   if (sort === 'netAmt')   cols.push({ th: '法人買超金額', td: x => `<td class="n ${tone(x.netAmt)}">${fmtNetAmt(x.netAmt)}</td>` });
   if (sort === 'netRatio') cols.push({ th: '占成交量',     td: x => `<td class="n ${tone(x.netRatio)}">${fmtPct(x.netRatio)}</td>` });
+  if (newHigh) cols.push({ th: { gap20: '距 20 日高', gap60: '距 60 日高', gap240: '距一年高', gapAll: '距歷史高' }[nhField], td: x => `<td class="n ${tone(x[nhField])}">${fmtPct(x[nhField])}</td>` });
   if (SORTS[sort].hist) {
     const toneOf = sort === 'volRatio' ? () => '' : x => tone(x[sort]);
     cols.push({ th: SORTS[sort].label, td: x => `<td class="n ${toneOf(x)}">${SORT_FMT[sort](x)}</td>` });
@@ -796,6 +838,7 @@ async function initAuto() {
   document.getElementById('date').innerHTML = idx.dates
     .map(d => `<option value="${d}">${d}（${WEEK[new Date(d + 'T00:00:00').getDay()]}）</option>`).join('');
   document.getElementById('auto').hidden = false;
+  document.querySelector('#nhwin option[value=gapAll]').textContent = `資料期間（自 ${idx.dates[idx.dates.length - 1]}）`;
   if (SLOTS.some(s => state[s])) { document.getElementById('src').value = 'manual'; return; }   // 已經手動放檔就不切換
   source = 'auto';
   loadAutoDate(idx.dates[0]);
@@ -869,6 +912,15 @@ window.addEventListener('drop', e => e.preventDefault());
 document.getElementById('exdr').addEventListener('change', render);
 document.getElementById('instonly').addEventListener('change', render);
 document.getElementById('sort').addEventListener('change', render);
+// 新高：切換模式時換上該模式的預設門檻（創新高 0%、接近新高 5%）
+document.getElementById('nhmode').addEventListener('change', e => {
+  const near = e.target.value === 'near';
+  document.getElementById('nhlab').textContent = near ? '距前高' : '高出至少';
+  document.getElementById('nhpct').value = near ? 5 : 0;
+  render();
+});
+document.getElementById('nhwin').addEventListener('change', render);
+document.getElementById('nhpct').addEventListener('input', render);
 document.getElementById('minamt').addEventListener('input', render);
 render();
 initAuto();

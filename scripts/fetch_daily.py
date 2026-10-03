@@ -252,7 +252,11 @@ def fetch_day(d):
 # 只用 data/ 裡已有的日期；前面的資料不夠時該欄為 null。價格未還原除權息，跨除權息日的漲幅會偏低
 
 HIST = DATA / 'hist'
-HIST_FIELDS = ['code', 'volRatio', 'ret5', 'ret20', 'streak', 'inst5']
+HIST_FIELDS = ['code', 'volRatio', 'ret5', 'ret20', 'streak', 'inst5',
+               'gap20', 'gap60', 'gap240', 'gapAll', 'maxClose']
+# gapN：收盤價距「前 N 個交易日最高收盤」幾 %，正數 = 創新高且高出幾 %，負數 = 離前高還差幾 %。
+# gapAll 用資料期間內的最高收盤（目前能判斷的歷史新高）；maxClose 為含當天的最高收盤，供下次接續計算
+GAP_WINDOWS = (20, 60, 240)
 _day_cache = {}
 
 
@@ -274,7 +278,8 @@ def load_day(ds):
     return _day_cache[ds]
 
 
-def build_hist(dates, i):
+def build_hist(dates, i, gaps):
+    """gaps：{code: [gap20, gap60, gap240, gapAll, maxClose]}，由 ensure_hist 依序累積算出"""
     today = load_day(dates[i])
     prev = [load_day(ds) for ds in dates[max(0, i - 20):i]]       # 前 20 個交易日，舊 → 新
     rows = []
@@ -304,21 +309,75 @@ def build_hist(dates, i):
         vals = [d[code][2] * d[code][1] for d in days5 if code in d and d[code][2] is not None and d[code][1]]
         inst5 = round(sum(vals)) if len(vals) >= 3 else None
 
-        rows.append([code, vol_ratio, ret(5), ret(20), streak if net is not None else None, inst5])
+        rows.append([code, vol_ratio, ret(5), ret(20), streak if net is not None else None, inst5]
+                    + gaps.get(code, [None] * 5))
     HIST.mkdir(parents=True, exist_ok=True)
     (HIST / f'{dates[i]}.json').write_text(json.dumps(
         {'date': dates[i], 'fields': HIST_FIELDS, 'rows': rows}, ensure_ascii=False, separators=(',', ':')), encoding='utf-8')
 
 
+def _seed_max_close(ds):
+    """讀某天 hist 檔的 maxClose；舊格式或沒有檔案回傳 None"""
+    p = HIST / f'{ds}.json'
+    if not p.exists():
+        return None
+    j = json.loads(p.read_text(encoding='utf-8'))
+    if 'maxClose' not in j['fields']:
+        return None
+    k = j['fields'].index('maxClose')
+    return {r[0]: r[k] for r in j['rows'] if r[k] is not None}
+
+
 def ensure_hist(rebuild=False, recent=25):
-    """補上缺少的歷史指標檔。新抓到的日期會影響之後 20 天的指標，所以最近 recent 天一律重算"""
+    """補上缺少的歷史指標檔。新抓到的日期會影響之後的指標，所以最近 recent 天一律重算。
+    由舊到新走過每個交易日，用單調佇列維護各期間的最高收盤，資料再多也只需走一遍"""
+    from collections import deque
     dates = trading_dates()
-    built = 0
-    for i, ds in enumerate(dates):
-        if rebuild or i >= len(dates) - recent or not (HIST / f'{ds}.json').exists():
-            build_hist(dates, i)
-            built += 1
-    print(f'歷史指標：更新 {built} 天')
+    if rebuild:
+        targets = set(range(len(dates)))
+    else:
+        targets = {i for i, ds in enumerate(dates)
+                   if i >= len(dates) - recent or not (HIST / f'{ds}.json').exists()}
+    if not targets:
+        return
+    start = 0 if rebuild else max(0, min(targets) - max(GAP_WINDOWS))
+    ath = {}
+    if start > 0:
+        seed = _seed_max_close(dates[start - 1])
+        if seed is None:
+            start = 0                            # 沒有可接續的紀錄，從頭算
+        else:
+            ath = seed
+    windows = {n: {} for n in GAP_WINDOWS}       # n → {code: deque[(日期索引, 收盤)]，收盤遞減}
+
+    for i in range(start, len(dates)):
+        day = load_day(dates[i])
+        if i in targets:
+            gaps = {}
+            for code, (_amt, close, _net) in day.items():
+                g = []
+                for n in GAP_WINDOWS:
+                    dq = windows[n].get(code)
+                    while dq and dq[0][0] < i - n:
+                        dq.popleft()
+                    g.append(round((close / dq[0][1] - 1) * 100, 2) if i >= n and dq and close else None)
+                prev_ath = ath.get(code)
+                g.append(round((close / prev_ath - 1) * 100, 2) if prev_ath and close else None)
+                g.append(max(prev_ath or 0, close or 0) or None)
+                gaps[code] = g
+            build_hist(dates, i, gaps)
+        for code, (_amt, close, _net) in day.items():
+            if not close:
+                continue
+            ath[code] = max(ath.get(code, close), close)
+            for n in GAP_WINDOWS:
+                dq = windows[n].setdefault(code, deque())
+                while dq and dq[-1][1] <= close:
+                    dq.pop()
+                dq.append((i, close))
+        if i >= 70:
+            _day_cache.pop(dates[i - 70], None)  # 只需保留最近 60 多天，避免多年資料吃光記憶體
+    print(f'歷史指標：更新 {len(targets)} 天')
 
 
 def write_index():
