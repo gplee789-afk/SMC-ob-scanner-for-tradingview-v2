@@ -276,7 +276,9 @@ td.m-TWSE { color: var(--twse); } td.m-TPEX { color: var(--tpex); }
         <option value="10">近 10 個交易日</option>
         <option value="20">近 20 個交易日</option>
         <option value="60">近 60 個交易日</option>
+        <option value="custom">自訂…</option>
       </select>
+      <span id="spancustom" hidden>近 <input type="number" id="spann" min="1" max="120" step="1" value="30" inputmode="numeric" aria-label="自訂交易日數"> 個交易日</span>
     </label>
     <span class="meta" id="autostat"></span>
   </section>
@@ -883,7 +885,7 @@ function aggregate(days, label) {
 let loadToken = 0;
 async function loadAutoDate(d) {
   const token = ++loadToken;                     // 快速連續切換時，只採用最後一次的結果
-  const want = +$('span').value, all = datePick.dates, i = all.indexOf(d);
+  const want = spanDays(), all = datePick.dates, i = all.indexOf(d);
   const ds = all.slice(i, i + want);              // 由新到舊
   auto.current = null; auto.span = null;
   auto.status = ds.length > 1 ? `載入 ${ds.length} 天的資料中…` : '載入中…';
@@ -1027,7 +1029,26 @@ document.getElementById('src').addEventListener('change', e => {
   // 放檔格子在頁面上方，切到手動時捲上去
   if (source === 'manual') document.getElementById('slots').scrollIntoView({ behavior: 'smooth', block: 'start' });
 });
-document.getElementById('span').addEventListener('change', () => loadAutoDate(datePick.cur));
+// 區間：選「自訂」時顯示天數輸入框，1–120 個交易日（太長一次要下載太多天的資料）
+const SPAN_MAX = 120;
+function spanDays() {
+  if ($('span').value !== 'custom') return +$('span').value;
+  const n = Math.round(+$('spann').value);
+  return Math.min(SPAN_MAX, Math.max(1, Number.isFinite(n) && n > 0 ? n : 1));
+}
+document.getElementById('span').addEventListener('change', () => {
+  $('spancustom').hidden = $('span').value !== 'custom';
+  if ($('span').value === 'custom') $('spann').focus();
+  loadAutoDate(datePick.cur);
+});
+let spanTimer;
+document.getElementById('spann').addEventListener('input', () => {   // 打字時稍等一下再載入
+  clearTimeout(spanTimer);
+  spanTimer = setTimeout(() => {
+    if (+$('spann').value > SPAN_MAX) $('spann').value = SPAN_MAX;
+    loadAutoDate(datePick.cur);
+  }, 500);
+});
 
 // ── 放檔 ──
 document.querySelectorAll('.slot').forEach(el => {
