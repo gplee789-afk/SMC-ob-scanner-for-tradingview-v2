@@ -524,11 +524,8 @@ const SORT_FMT = { amount: x => fmtAmt(x.amount), up: x => fmtPct(x.pct), down: 
                    ret5: x => fmtPct(x.ret5), ret20: x => fmtPct(x.ret20),
                    streak: x => x.streak === null ? '–' : x.streak === 0 ? '0 天' : `${sgn(x.streak)}${Math.abs(x.streak)} 天`,
                    inst5: x => fmtNetAmt(x.inst5) };
-// 證交所「基本市況報導」個股頁，上市 tse_、上櫃 otc_
-const stockUrl = x => {
-  const ex = x.market === 'TPEX' ? 'otc' : 'tse';
-  return `https://mis.twse.com.tw/stock/detail-item?id=${ex}_${x.code}.tw&ex=${ex}&lang=zhHant`;
-};
+// Yahoo 股市個股頁，上市 .TW、上櫃 .TWO
+const stockUrl = x => `https://tw.stock.yahoo.com/quote/${x.code}.${x.market === 'TPEX' ? 'TWO' : 'TW'}`;
 const tone = v =>v === null || v === undefined ? 'na' : v > 0 ? 'pos' : v < 0 ? 'neg' : '';
 const esc = s => s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
@@ -680,8 +677,8 @@ function render() {
     const rows = seg.map((x, i) => {
       const link = stockUrl(x);
       return `<tr><td>${s + i}</td><td class="m-${x.market}">${x.market}</td>`
-        + `<td><a class="stk" href="${link}" target="_blank" rel="noopener" title="開啟證交所個股行情">${x.code}</a></td>`
-        + `<td><a class="stk" href="${link}" target="_blank" rel="noopener" title="開啟證交所個股行情">${esc(x.name)}</a></td>`
+        + `<td><a class="stk" href="${link}" target="_blank" rel="noopener" title="開啟 Yahoo 股市個股頁">${x.code}</a></td>`
+        + `<td><a class="stk" href="${link}" target="_blank" rel="noopener" title="開啟 Yahoo 股市個股頁">${esc(x.name)}</a></td>`
         + `${cols.map(c => c.td(x)).join('')}</tr>`;
     }).join('');
     return `<li class="batch" data-i="${bi}">
