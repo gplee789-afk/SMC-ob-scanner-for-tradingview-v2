@@ -88,6 +88,7 @@ a.stk:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; bord
 }
 .auto .meta { font-size: 13px; color: var(--muted); }
 .datepick { flex-wrap: wrap; }
+.srcbar { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; margin-top: 40px; font-size: 13px; color: var(--muted); }
 .dnav {
   font: inherit; font-size: 14px; color: var(--ink); background: var(--surface); cursor: pointer;
   border: 1px solid var(--line); border-radius: 6px; padding: 4px 10px; line-height: 1.4;
@@ -260,12 +261,6 @@ td.m-TWSE { color: var(--twse); } td.m-TPEX { color: var(--tpex); }
   </header>
 
   <section class="auto" id="auto" hidden>
-    <label class="field">資料來源
-      <select id="src">
-        <option value="auto">自動抓取</option>
-        <option value="manual">手動放檔</option>
-      </select>
-    </label>
     <span class="field datepick" id="datewrap">日期
       <button type="button" class="dnav" id="dprev" aria-label="前一個交易日" title="前一個交易日">‹</button>
       <select id="dy" aria-label="年"></select>
@@ -274,6 +269,15 @@ td.m-TWSE { color: var(--twse); } td.m-TPEX { color: var(--tpex); }
       <button type="button" class="dnav" id="dnext" aria-label="下一個交易日" title="下一個交易日">›</button>
       <button type="button" class="dnav" id="dlatest">最新</button>
     </span>
+    <label class="field" title="把區間內每天的資料合起來統計：成交金額與法人買賣超加總，漲跌幅從區間第一天的昨收算到最後一天收盤">區間
+      <select id="span">
+        <option value="1" selected>當日</option>
+        <option value="5">近 5 個交易日</option>
+        <option value="10">近 10 個交易日</option>
+        <option value="20">近 20 個交易日</option>
+        <option value="60">近 60 個交易日</option>
+      </select>
+    </label>
     <span class="meta" id="autostat"></span>
   </section>
 
@@ -323,6 +327,16 @@ td.m-TWSE { color: var(--twse); } td.m-TPEX { color: var(--tpex); }
   <div class="notes" id="notes"></div>
   <p class="summary" id="summary"></p>
   <div id="out"></div>
+
+  <section class="srcbar" id="srcwrap" hidden>
+    <label class="field">資料來源
+      <select id="src">
+        <option value="auto">自動抓取</option>
+        <option value="manual">手動放檔</option>
+      </select>
+    </label>
+    <span>自動資料某天沒抓到時，可以切換成「手動放檔」，自己下載交易所的檔案放進來。</span>
+  </section>
 
   <footer>
     <p>成交金額為交易所公布值（含零股、盤後定價、鉅額交易），上市與上櫃定義相同。漲跌幅與振幅以昨收（收盤 − 漲跌）為基準；法人買超金額 = 三大法人買賣超股數 × 收盤價，占成交量 = 買賣超股數 ÷ 成交股數。依成交金額以外的項目排序時，會先排除成交金額低於設定值的股票，避免冷門股擠進名單。</p>
@@ -474,7 +488,8 @@ function addMetrics(x) {
   x.range = prev > 0 && x.high !== null && x.low !== null ? (x.high - x.low) / prev * 100 : null;
   // 有法人檔、但檔內沒有這檔股票：當天沒有法人進出，視為 0
   const n = x.net === undefined ? null : (x.net ?? 0);
-  x.netAmt   = n !== null && x.close !== null ? n * x.close : null;
+  // 區間統計時 netValue 為每天「買賣超股數 × 當天收盤」的加總；單日則用收盤價換算
+  x.netAmt   = n === null ? null : x.netValue !== undefined ? x.netValue : x.close !== null ? n * x.close : null;
   x.netRatio = n !== null && x.shares > 0 ? n / x.shares * 100 : null;
   return x;
 }
@@ -490,7 +505,7 @@ function rank(parsedList, { excludeDR = false, instOnly = false, sort = 'amount'
   // newHigh：{field: 'gap240' 等, mode: 'new' | 'near', pct}。
   // new = 收盤高於前高至少 pct %；near = 收盤在前高下方 pct % 以內（尚未突破）
   const inst = {};
-  for (const p of parsedList) if (p.kind === 'inst') inst[p.market] = new Map(p.recs.map(r => [r.code, r.value]));
+  for (const p of parsedList) if (p.kind === 'inst') inst[p.market] = new Map(p.recs.map(r => [r.code, r]));
 
   const merged = [];
   for (const p of parsedList) {
@@ -499,7 +514,8 @@ function rank(parsedList, { excludeDR = false, instOnly = false, sort = 'amount'
     for (const r of p.recs)
       merged.push(addMetrics({ market: p.market, code: r.code, name: r.name, amount: r.value,
         shares: r.shares, close: r.close, high: r.high, low: r.low, change: r.change,
-        net: m ? (m.has(r.code) ? m.get(r.code) : null) : undefined }));   // undefined = 該市場沒放法人檔
+        net: m ? (m.has(r.code) ? m.get(r.code).value : null) : undefined,   // undefined = 該市場沒放法人檔
+        netValue: m && m.has(r.code) ? m.get(r.code).amt : undefined }));
   }
   // 歷史指標（hist：代號 → {volRatio, ret5, ...}）；沒有就是 null，依這些項目排序時會被排除
   for (const x of merged) {
@@ -556,7 +572,7 @@ const KIND_NAME   = { quote: '每日行情', inst: '三大法人' };
 const slotInfo = s => { const [m, k] = s.split('-'); return { market: m.toUpperCase(), kind: k }; };
 const state = Object.fromEntries(SLOTS.map(s => [s, null]));   // {fileName, rows}
 const fmt = n => n.toLocaleString('en-US');
-const fmtAmt = v => v >= 1e8 ? `${(v / 1e8).toFixed(v >= 1e10 ? 0 : 1)} 億` : `${fmt(Math.round(v / 1e4))} 萬`;
+const fmtAmt = v => v >= 1e12 ? `${(v / 1e12).toFixed(2)} 兆` : v >= 1e8 ? `${(v / 1e8).toFixed(v >= 1e10 ? 0 : 1)} 億` : `${fmt(Math.round(v / 1e4))} 萬`;
 const sgn = v => v > 0 ? '+' : v < 0 ? '−' : '';
 const fmtPct = v => v === null ? '–' : `${sgn(v)}${Math.abs(v).toFixed(2)}%`;
 const fmtNetAmt = v => v === null ? '–' : v === 0 ? '0' : sgn(v) + fmtAmt(Math.abs(v));
@@ -690,11 +706,15 @@ function render() {
     return;
   }
 
-  const r = rank(ok, { excludeDR: document.getElementById('exdr').checked, instOnly, sort, minAmount: minYi * 1e8,
+  // 區間統計時成交金額是加總，最低成交金額門檻改用日均（乘上天數）
+  const spanDays = useAuto && auto.span ? auto.span.n : 1;
+  const r = rank(ok, { excludeDR: document.getElementById('exdr').checked, instOnly, sort, minAmount: minYi * 1e8 * spanDays,
                        industries: industry.picked, industryMode: industry.mode, industryOf,
                        hist: histOk ? auto.hist : null, newHigh });
   if (newHigh && r.nhDropped === r.traded - r.indDropped)
     notes.push(`這天沒有股票符合新高條件，或之前累積的交易日還不夠算 ${NH_LABEL[nhField]}新高。`);
+  if (spanDays > 1 && (SORTS[sort].hist || newHigh))
+    notes.push(`歷史比較的排序與新高篩選以區間最後一天（${datePick.cur}）為準，不受區間影響。`);
   if (SORTS[sort].hist && r.unrankable > r.eligible)
     notes.push(`多數股票算不出${SORTS[sort].label}：這天之前累積的交易日還不夠（量比要 10 天、5 日 / 20 日漲幅要 5 / 20 天）。`);
   if (r.picked.length < TOTAL) notes.push(`符合條件的只有 ${r.picked.length} 檔，不足 ${TOTAL}，只分出 ${r.batches.length} 批。`);
@@ -814,15 +834,63 @@ function setStat(text, bad = false) {
   el.textContent = text; el.classList.toggle('bad', bad);
 }
 
+async function loadDay(d) {
+  if (!auto.cache[d]) {
+    const r = await fetch(`data/${d}.json`, { cache: 'no-cache' });
+    if (!r.ok) throw new Error(`${d} HTTP ${r.status}`);
+    auto.cache[d] = fromAuto(await r.json());
+  }
+  return auto.cache[d];
+}
+
+// 區間統計：days 由新到舊，每個元素是 fromAuto 的陣列。以最後一天有交易的股票為準，
+// 成交金額、股數、法人買賣超加總；高低取區間極值；漲跌從區間第一天的昨收算到最後一天收盤
+function aggregate(days, label) {
+  const out = [];
+  const pick = (d, market, kind) => d.find(p => p.market === market && p.kind === kind);
+  for (const market of ['TWSE', 'TPEX']) {
+    const lastQ = pick(days[0], market, 'quote');
+    if (!lastQ) continue;
+    const qmaps = days.map(d => { const p = pick(d, market, 'quote'); return p ? new Map(p.recs.map(r => [r.code, r])) : null; });
+    const imaps = days.map(d => { const p = pick(d, market, 'inst'); return p ? new Map(p.recs.map(r => [r.code, r.value])) : null; });
+    out.push({ market, kind: 'quote', date: label, recs: lastQ.recs.map(r => {
+      let value = 0, shares = 0, high = null, low = null, startPrev = null;
+      for (let k = days.length - 1; k >= 0; k--) {            // 由舊到新
+        const x = qmaps[k] && qmaps[k].get(r.code);
+        if (!x) continue;
+        value += x.value || 0; shares += x.shares || 0;
+        if (x.high !== null) high = high === null ? x.high : Math.max(high, x.high);
+        if (x.low !== null) low = low === null ? x.low : Math.min(low, x.low);
+        if (startPrev === null && x.close !== null && x.change !== null) startPrev = x.close - x.change;
+      }
+      const change = r.close !== null && startPrev !== null ? r.close - startPrev : null;
+      return { code: r.code, name: r.name, value, shares, close: r.close, high, low, change };
+    }) });
+    if (imaps.some(Boolean)) out.push({ market, kind: 'inst', date: label, recs: lastQ.recs.map(r => {
+      let value = 0, amt = 0;
+      imaps.forEach((m, k) => {
+        if (!m) return;
+        const n = m.get(r.code) || 0, x = qmaps[k] && qmaps[k].get(r.code);
+        value += n;
+        if (x && x.close) amt += n * x.close;
+      });
+      return { code: r.code, value, amt: Math.round(amt) };
+    }) });
+  }
+  return out;
+}
+
+let loadToken = 0;
 async function loadAutoDate(d) {
-  auto.current = null; auto.status = '載入中…'; setStat(''); render();
+  const token = ++loadToken;                     // 快速連續切換時，只採用最後一次的結果
+  const want = +$('span').value, all = datePick.dates, i = all.indexOf(d);
+  const ds = all.slice(i, i + want);              // 由新到舊
+  auto.current = null; auto.span = null;
+  auto.status = ds.length > 1 ? `載入 ${ds.length} 天的資料中…` : '載入中…';
+  setStat(''); render();
   try {
-    if (!auto.cache[d]) {
-      const r = await fetch(`data/${d}.json`, { cache: 'no-cache' });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      auto.cache[d] = fromAuto(await r.json());
-    }
-    // 歷史指標檔（data/hist/）；沒有也不影響其他排序
+    const days = await Promise.all(ds.map(loadDay));
+    // 歷史指標檔（data/hist/）以區間最後一天為準；沒有也不影響其他排序
     if (!(d in auto.histCache)) {
       try {
         const h = await fetch(`data/hist/${d}.json`, { cache: 'no-cache' });
@@ -830,13 +898,19 @@ async function loadAutoDate(d) {
         auto.histCache[d] = j && new Map(j.rows.map(row => [row[0], Object.fromEntries(j.fields.slice(1).map((f, k) => [f, row[k + 1]]))]));
       } catch (e) { auto.histCache[d] = null; }
     }
+    if (token !== loadToken) return;
     auto.hist = auto.histCache[d];
-    auto.current = auto.cache[d];
-    const miss = ['TWSE', 'TPEX'].filter(m => !auto.current.some(p => p.market === m && p.kind === 'inst'));
-    if (miss.length) setStat(`${miss.map(m => MARKET_NAME[m]).join('、')}三大法人這天沒有抓到`, true);
+    const md = s => `${s.slice(5, 7)}月${s.slice(8)}日`;
+    if (ds.length === 1) auto.current = days[0];
+    else auto.current = aggregate(days, `${md(ds[ds.length - 1])}～${md(d)}（${ds.length} 個交易日）`);
+    auto.span = { n: ds.length, want };
+    const miss = ['TWSE', 'TPEX'].filter(m => days.some(day => !day.some(p => p.market === m && p.kind === 'inst')));
+    if (ds.length < want) setStat(`資料只到 ${ds[ds.length - 1]}，區間只有 ${ds.length} 個交易日`, true);
+    else if (miss.length) setStat(`${miss.map(m => MARKET_NAME[m]).join('、')}三大法人有缺日，法人統計不完整`, true);
     else setStat('每個交易日 18:00 後自動更新');
   } catch (e) {
-    auto.status = `讀取 ${d} 的資料失敗（${e.message}），可以改用「手動放檔」。`;
+    if (token !== loadToken) return;
+    auto.status = `讀取資料失敗（${e.message}），可以在最下方改用「手動放檔」。`;
     setStat('讀取失敗', true);
   }
   render();
@@ -893,8 +967,13 @@ async function initAuto() {
   datePick.dates = idx.dates;
   fillDatePick(idx.dates[0]);
   document.getElementById('auto').hidden = false;
+  document.getElementById('srcwrap').hidden = false;
   document.querySelector('#nhwin option[value=gapAll]').textContent = `資料期間（自 ${idx.dates[idx.dates.length - 1]}）`;
-  if (SLOTS.some(s => state[s])) { document.getElementById('src').value = 'manual'; return; }   // 已經手動放檔就不切換
+  if (SLOTS.some(s => state[s])) {                // 已經手動放檔就不切換
+    document.getElementById('src').value = 'manual';
+    document.getElementById('auto').hidden = true;
+    return;
+  }
   source = 'auto';
   loadAutoDate(idx.dates[0]);
 }
@@ -942,11 +1021,13 @@ document.addEventListener('click', e => {
 
 document.getElementById('src').addEventListener('change', e => {
   source = e.target.value;
-  document.getElementById('datewrap').hidden = source !== 'auto';
-  document.getElementById('autostat').hidden = source !== 'auto';
+  document.getElementById('auto').hidden = source !== 'auto';
   if (source === 'auto' && !auto.current) loadAutoDate(datePick.cur);
   else render();
+  // 放檔格子在頁面上方，切到手動時捲上去
+  if (source === 'manual') document.getElementById('slots').scrollIntoView({ behavior: 'smooth', block: 'start' });
 });
+document.getElementById('span').addEventListener('change', () => loadAutoDate(datePick.cur));
 
 // ── 放檔 ──
 document.querySelectorAll('.slot').forEach(el => {
